@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>MultiSync — watch several YouTube videos and live streams in sync</title>
+  <meta name="description" content="Put several YouTube videos or live streams side by side and keep them in sync. No account, no tracking.">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="page">
+    <h1 class="brand">Multi<span>Sync</span></h1>
+    <p class="lead">Watch several YouTube videos or live streams side by side, kept in sync.</p>
+
+    <section class="card">
+      <h2>1. Add videos <small>— paste one link per line</small></h2>
+      <textarea id="paste" placeholder="https://www.youtube.com/watch?v=…&#10;https://youtu.be/…&#10;https://www.youtube.com/live/…" aria-label="YouTube links"></textarea>
+      <p class="error" id="paste-error" role="alert"></p>
+      <div class="row end">
+        <button id="add" class="primary">Add</button>
+      </div>
+      <p class="note">Works with watch, youtu.be, live, shorts and embed links, plain video IDs, and existing ViewSync links.</p>
+    </section>
+
+    <section class="card">
+      <h2>2. Set where each video starts <small>— optional</small></h2>
+      <ul class="videos" id="videos"></ul>
+      <p class="empty" id="empty">No videos yet.</p>
+      <p class="note">Start time accepts <code>90</code>, <code>1:30</code> or <code>1m30s</code>. For a live stream it means "seconds behind live". You can fine-tune in 0.1s steps while watching.</p>
+    </section>
+
+    <section class="card">
+      <h2>3. Watch</h2>
+      <div class="row">
+        <label><input type="radio" name="audio" value="solo" checked> Sound from one video at a time</label>
+        <label><input type="radio" name="audio" value="all"> Sound from all videos</label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <input type="text" class="link" id="link" readonly aria-label="Shareable link">
+        <button id="copy">Copy link</button>
+        <a class="btn primary" id="go" href="#">Watch in sync</a>
+      </div>
+    </section>
+
+    <section class="card" id="recent-card" hidden>
+      <h2>Recent sessions <small>— saved only in this browser</small></h2>
+      <ul class="recent" id="recent"></ul>
+      <div class="row end"><button id="clear-recent">Clear list</button></div>
+    </section>
+
+    <section class="card help">
+      <h2>Keyboard shortcuts while watching</h2>
+      <ul>
+        <li><kbd>Space</kbd> play / pause all</li>
+        <li><kbd>←</kbd> <kbd>→</kbd> back / forward 10 seconds</li>
+        <li><kbd>1</kbd>–<kbd>9</kbd> switch sound to that video</li>
+        <li><kbd>M</kbd> mute all · <kbd>S</kbd> re-sync now · <kbd>F</kbd> full screen · <kbd>G</kbd> back to grid</li>
+      </ul>
+      <p class="note">Shortcuts work when the page itself has focus. After clicking inside a video, click the control bar once to get them back.</p>
+    </section>
+  </main>
+  <script type="module" src="js/builder.js"></script>
+</body>
+</html>

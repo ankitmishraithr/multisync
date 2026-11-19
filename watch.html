@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>MultiSync</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="watch">
+  <div id="banner" role="alert" hidden></div>
+
+  <div id="stage">
+    <div id="gate">
+      <button id="start" class="primary" disabled>Loading videos…</button>
+      <p id="gate-note">Browsers only allow sound after one click, so a single click here starts every video together.</p>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div id="timeline-row">
+      <span id="now">0:00</span>
+      <input type="range" id="timeline" min="0" max="0" step="0.1" value="0" aria-label="Position in all videos" disabled>
+      <span id="total">0:00</span>
+    </div>
+    <div id="buttons">
+      <button id="play" disabled>Play</button>
+      <button id="back" title="Back 10 seconds (←)" disabled>−10s</button>
+      <button id="fwd" title="Forward 10 seconds (→)" disabled>+10s</button>
+      <button id="resync" title="Line every video up again now (S)" disabled>Re-sync</button>
+      <button id="golive" title="Jump every live stream to the live edge" hidden>Go live</button>
+      <label class="wide-only"><input type="checkbox" id="autosync" checked> Auto-sync</label>
+      <span id="status" aria-live="polite"></span>
+      <span class="gap"></span>
+      <label>Sound
+        <select id="audio" aria-label="Sound mode">
+          <option value="solo">One video</option>
+          <option value="all">All videos</option>
+        </select>
+      </label>
+      <button id="mute" title="Mute everything (M)">Mute</button>
+      <input type="range" id="volume" min="0" max="100" value="100" aria-label="Volume">
+      <label class="wide-only">Speed
+        <select id="speed" aria-label="Playback speed">
+          <option>0.5</option><option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option><option>2</option>
+        </select>
+      </label>
+      <button id="grid" title="Show all videos the same size (G)" hidden>Grid</button>
+      <button id="share">Copy link</button>
+      <a id="edit" class="btn" href="index.html">Edit</a>
+      <button id="full" class="wide-only" title="Full screen (F)">Full screen</button>
+    </div>
+  </div>
+
+  <div id="toast" role="status" hidden></div>
+  <script type="module" src="js/watch.js"></script>
+</body>
+</html>
