@@ -96,3 +96,16 @@ export function computeRects(n, width, height, focusIndex = null, gap = 6) {
   }
   return rects;
 }
+
+/** Phone layout for many videos: one full-width column that scrolls. */
+export function stackRects(n, width, gap = 6, ratio = 16 / 9) {
+  const w = Math.floor(width);
+  const h = Math.floor(w / ratio);
+  return Array.from({ length: n }, (_, i) => ({ x: 0, y: i * (h + gap), w, h }));
+}
+
+/** Use the scrolling column when a fitted grid would make tiles too small on a narrow screen. */
+export function shouldStack(n, width, height, gap = 6) {
+  if (n < 3 || width >= 640) return false;
+  return bestGrid(n, width, height, gap).tileW < width * 0.8;
+}

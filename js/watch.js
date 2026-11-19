@@ -1,58 +1,37 @@
-import { parseWatch, buildQuery, formatTime } from './parse.js';
-import { computeRects } from './layout.js';
+import { parseWatch, parseInput, buildQuery, formatTime, videoKey, sourceUrl, shortName, SOURCE_LABEL } from './parse.js';
+import { computeRects, stackRects, shouldStack } from './layout.js';
 import { STATE, planCorrections, sharedDuration, targetTime, clamp } from './sync.js';
 import { loadSettings, saveSettings, rememberSession } from './store.js';
+import { createPlayer, chatUrl } from './sources.js';
+import { hydrateIcons, setIcon, icon } from './icons.js';
+import { setTheme, getTheme, onTheme, resolvedTheme } from './theme.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
 const settings = loadSettings();
 const session = parseWatch(location.search);
+const MAX_VIDEOS = 16;
 
-const ERRORS = {
-  2: 'This video ID is not valid.',
-  5: 'This video cannot be played in the browser.',
-  100: 'This video was removed or is private.',
-  101: 'This video cannot be played on other sites (the owner turned that off, or it is a finished live stream with no recording).',
-  150: 'This video cannot be played on other sites (the owner turned that off, or it is a finished live stream with no recording).',
-  153: 'YouTube refused the player. Open this page from a web server (http://…), not from a file.',
-};
-
-/** One entry per video. `start` = seconds into the video (or seconds behind live for a stream). */
-const tiles = session.videos.map((video, index) => ({
-  index, id: video.id, start: video.start,
-  player: null, ready: false, usable: true, live: false, primed: false,
-  title: '', lastFix: 0, lastKick: 0, el: null, parts: {},
-}));
+/** One entry per video, in display order. */
+const tiles = [];
+let nextUid = 1;
 
 const state = {
   phase: 'loading', // loading -> ready -> priming -> running
   playing: false,
   T: 0, // shared clock: seconds since every video's start point
+  rate: 1,
   audio: session.audio, // 'solo' | 'all'
-  solo: 0,
+  solo: null, // the tile that is heard in 'solo' mode
   mutedAll: false,
-  focus: null,
+  focus: null, // the enlarged tile, or null for the grid
   scrubbing: false,
+  chat: null, // the tile whose chat is open
+  barHidden: false,
 };
 
 // ---------- small helpers ----------
 
-let toastTimer;
-function toast(text) {
-  $('toast').textContent = text;
-  $('toast').hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => ($('toast').hidden = true), 1800);
-}
-
-function banner(html) {
-  $('banner').innerHTML = html;
-  $('banner').hidden = false;
-  layout();
-}
-
-const usable = () => tiles.filter((t) => t.usable && t.ready);
-const recorded = () => usable().filter((t) => !t.live);
 const safe = (fn, fallback) => {
   try {
     const v = fn();
@@ -62,136 +41,220 @@ const safe = (fn, fallback) => {
   }
 };
 
+let toastTimer;
+function toast(text) {
+  $('toast').textContent = text;
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ($('toast').hidden = true), 2200);
+}
+
+function banner(text) {
+  $('banner').textContent = text;
+  $('banner').hidden = false;
+}
+
+const usable = () => tiles.filter((t) => t.usable && t.ready);
+const recorded = () => usable().filter((t) => !t.live);
+const number = (t) => tiles.indexOf(t) + 1;
+
 function snapshot() {
   return tiles.map((t) => ({
     start: t.start,
     usable: t.usable && t.ready,
     live: t.live,
-    time: t.ready ? safe(() => t.player.getCurrentTime(), 0) : 0,
-    state: t.ready ? safe(() => t.player.getPlayerState(), STATE.UNSTARTED) : STATE.UNSTARTED,
-    duration: t.ready ? safe(() => t.player.getDuration(), 0) : 0,
+    time: t.ready ? safe(() => t.player.time(), 0) : 0,
+    state: t.ready ? safe(() => t.player.state(), STATE.UNSTARTED) : STATE.UNSTARTED,
+    duration: t.ready ? safe(() => t.player.duration(), 0) : 0,
   }));
 }
 
 // ---------- layout ----------
 
 function layout() {
-  const rects = computeRects(tiles.length, stage.clientWidth, stage.clientHeight, state.focus);
+  const width = stage.clientWidth;
+  const height = stage.parentElement.clientHeight;
+  const focusIndex = tiles.indexOf(state.focus);
+  const stack = focusIndex < 0 && shouldStack(tiles.length, width, height);
+  const rects = stack ? stackRects(tiles.length, width) : computeRects(tiles.length, width, height, focusIndex < 0 ? null : focusIndex);
+  stage.classList.toggle('scroll', stack);
   tiles.forEach((t, i) => {
     Object.assign(t.el.style, { left: `${rects[i].x}px`, top: `${rects[i].y}px`, width: `${rects[i].w}px`, height: `${rects[i].h}px` });
+    t.parts.num.textContent = i + 1;
   });
-  $('grid').hidden = state.focus == null;
+  $('grid').hidden = focusIndex < 0;
 }
 
-function setFocus(index) {
-  state.focus = state.focus === index ? null : index;
-  tiles.forEach((t) => t.parts.focus.classList.toggle('on', t.index === state.focus));
+function setFocus(tile) {
+  state.focus = state.focus === tile ? null : tile;
+  tiles.forEach((t) => t.parts.focus.classList.toggle('on', t === state.focus));
   layout();
 }
 
 // ---------- tiles ----------
 
-function button(text, title, onClick) {
+function tool(iconName, label, onClick) {
   const b = document.createElement('button');
-  b.textContent = text;
-  b.title = title;
+  b.className = 'tool';
+  b.innerHTML = icon(iconName);
+  b.title = label;
+  b.setAttribute('aria-label', label);
   b.addEventListener('click', onClick);
   return b;
 }
 
-function buildTile(t) {
+function addTile(video) {
+  const t = {
+    uid: nextUid++, video: { kind: video.kind, id: video.id }, start: video.start || 0,
+    player: null, ready: false, usable: true, live: video.kind === 'twitch', primed: false,
+    title: '', volume: 100, lastFix: 0, lastKick: 0, el: null, parts: {},
+  };
   const el = document.createElement('div');
   el.className = 'tile';
-  el.dataset.index = t.index;
   el.innerHTML = `
-    <div class="frame"><div id="player-${t.index}"></div></div>
-    <div class="bar">
-      <span class="num">${t.index + 1}</span>
-      <span class="title">Loading…</span>
+    <div class="frame"></div>
+    <div class="tile-bar">
+      <span class="num"></span>
+      <span class="title"></span>
       <span class="badge" hidden>LIVE</span>
       <span class="drift"></span>
       <span class="tools"></span>
     </div>
     <div class="msg" hidden></div>`;
-  const tools = el.querySelector('.tools');
-  t.parts = {
-    title: el.querySelector('.title'),
-    badge: el.querySelector('.badge'),
-    drift: el.querySelector('.drift'),
-    msg: el.querySelector('.msg'),
-    audio: button('Sound', 'Hear this video', () => chooseAudio(t.index)),
-    focus: button('Focus', 'Make this video big', () => setFocus(t.index)),
-    minus: button('−0.1s', 'Shift this video 0.1s earlier (hold Shift for 1s)', (e) => nudge(t, e.shiftKey ? -1 : -0.1)),
-    plus: button('+0.1s', 'Shift this video 0.1s later (hold Shift for 1s)', (e) => nudge(t, e.shiftKey ? 1 : 0.1)),
-  };
-  tools.append(t.parts.audio, t.parts.focus, t.parts.minus, t.parts.plus);
   t.el = el;
+  const q = (sel) => el.querySelector(sel);
+  t.parts = { frame: q('.frame'), num: q('.num'), title: q('.title'), badge: q('.badge'), drift: q('.drift'), msg: q('.msg') };
+  t.parts.title.textContent = shortName(t.video);
+  t.parts.badge.hidden = !t.live;
+
+  t.parts.volume = Object.assign(document.createElement('input'), { type: 'range', min: 0, max: 100, value: 100, className: 'tile-volume', title: 'Volume of this video' });
+  t.parts.volume.setAttribute('aria-label', 'Volume of this video');
+  t.parts.volume.addEventListener('input', () => {
+    t.volume = Number(t.parts.volume.value);
+    applyAudio();
+  });
+  t.parts.audio = tool('volume', 'Hear this video', () => chooseAudio(t));
+  t.parts.focus = tool('focus', 'Make this video big', () => setFocus(t));
+  t.parts.minus = tool('earlier', 'Shift 0.1s earlier (Shift-click: 1s)', (e) => nudge(t, e.shiftKey ? -1 : -0.1));
+  t.parts.plus = tool('later', 'Shift 0.1s later (Shift-click: 1s)', (e) => nudge(t, e.shiftKey ? 1 : 0.1));
+  t.parts.remove = tool('close', 'Remove this video', () => removeTile(t));
+  q('.tools').append(t.parts.volume, t.parts.audio, t.parts.minus, t.parts.plus, t.parts.focus, t.parts.remove);
+
+  tiles.push(t);
   stage.append(el);
+  if (!state.solo) state.solo = t;
+
+  t.player = createPlayer({ ...t.video, start: t.start }, t.parts.frame, {
+    onReady: () => {
+      t.ready = true;
+      readInfo(t);
+      if (state.phase === 'running') joinRunning(t);
+      else updateGate();
+    },
+    onState: (code) => onPlayerState(t, code),
+    onError: (message) => failTile(t, message),
+  });
+  // A video that never answers must not hold the others hostage.
+  setTimeout(() => {
+    if (tiles.includes(t) && t.usable && !t.ready) failTile(t, 'This video did not load in time.');
+  }, 20000);
+  return t;
+}
+
+function removeTile(t) {
+  const index = tiles.indexOf(t);
+  if (index < 0) return;
+  safe(() => t.player.destroy());
+  t.el.remove();
+  tiles.splice(index, 1);
+  if (state.focus === t) state.focus = null;
+  if (state.chat === t) closeChat();
+  if (state.solo === t) state.solo = tiles.find((x) => x.usable) || tiles[0] || null;
+  layout();
+  applyAudio();
+  refreshChatButton();
+  updateGate();
+  syncUrl();
+  toast('Video removed');
 }
 
 function failTile(t, message) {
   t.usable = false;
-  t.parts.title.textContent = 'Unavailable';
   t.parts.msg.hidden = false;
-  t.parts.msg.innerHTML = `<strong>Video ${t.index + 1} can't be shown here</strong><span></span>
-    <a class="btn" target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=${t.id}">Open on YouTube</a>`;
-  t.parts.msg.querySelector('span').textContent = message;
-  if (state.audio === 'solo' && state.solo === t.index) {
-    const next = tiles.find((x) => x.usable);
-    if (next) state.solo = next.index;
-  }
+  t.parts.msg.replaceChildren();
+  const strong = Object.assign(document.createElement('strong'), { textContent: `${SOURCE_LABEL[t.video.kind]} can't be shown here` });
+  const text = Object.assign(document.createElement('span'), { textContent: message });
+  const open = Object.assign(document.createElement('a'), { className: 'btn', target: '_blank', rel: 'noopener', href: sourceUrl(t.video), textContent: 'Open original' });
+  const drop = Object.assign(document.createElement('button'), { className: 'btn', textContent: 'Remove' });
+  drop.addEventListener('click', () => removeTile(t));
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.append(open, drop);
+  t.parts.msg.append(strong, text, row);
+  if (state.solo === t) state.solo = tiles.find((x) => x.usable) || state.solo;
   applyAudio();
-  checkReady();
+  refreshChatButton();
+  updateGate();
 }
 
 function readInfo(t) {
-  const data = safe(() => t.player.getVideoData(), null);
-  if (!data) return;
-  if (data.title) {
-    t.title = data.title;
-    t.parts.title.textContent = data.author ? `${data.title} — ${data.author}` : data.title;
+  const info = safe(() => t.player.info(), null);
+  if (!info) return;
+  if (info.title && info.title !== t.title) {
+    t.title = info.title;
+    t.parts.title.textContent = info.author && info.author !== 'Twitch' && info.author !== 'Vimeo' ? `${info.title} · ${info.author}` : info.title;
     t.parts.title.title = t.parts.title.textContent;
   }
-  const wasLive = t.live;
-  t.live = Boolean(data.isLive);
-  t.parts.badge.hidden = !t.live;
-  if (t.live !== wasLive) {
-    t.parts.minus.title = t.live ? 'Move 0.1s closer to live' : 'Shift this video 0.1s earlier (hold Shift for 1s)';
-    t.parts.plus.title = t.live ? 'Move 0.1s further behind live' : 'Shift this video 0.1s later (hold Shift for 1s)';
-    $('golive').hidden = !tiles.some((x) => x.live);
+  if (info.live !== t.live) {
+    t.live = info.live;
+    t.parts.badge.hidden = !t.live;
   }
+  const canNudge = !t.live || t.player.canSeekLive;
+  t.parts.minus.hidden = t.parts.plus.hidden = !canNudge;
+  if (t.live) {
+    t.parts.minus.title = 'Move 0.1s closer to live';
+    t.parts.plus.title = 'Move 0.1s further behind live';
+  }
+  $('golive').hidden = !tiles.some((x) => x.live && x.usable);
+  refreshChatButton();
 }
 
 // ---------- audio ----------
 
 function applyAudio() {
   for (const t of tiles) {
-    const audible = !state.mutedAll && t.usable && (state.audio === 'all' || t.index === state.solo);
-    t.el.classList.toggle('audio', audible && state.audio === 'solo');
+    const audible = !state.mutedAll && t.usable && (state.audio === 'all' || t === state.solo);
+    t.el.classList.toggle('audio', audible && state.audio === 'solo' && tiles.length > 1);
     t.parts.audio.classList.toggle('on', audible);
+    t.parts.audio.innerHTML = icon(audible ? 'volume' : 'mute');
+    t.parts.volume.hidden = state.audio !== 'all';
     if (!t.ready || state.phase !== 'running') continue;
-    safe(() => t.player.setVolume(settings.volume));
-    safe(() => (audible ? t.player.unMute() : t.player.mute()));
+    safe(() => t.player.setVolume((settings.volume * t.volume) / 100));
+    safe(() => t.player.setMuted(!audible));
   }
-  $('mute').textContent = state.mutedAll ? 'Unmute' : 'Mute';
+  setIcon($('mute'), state.mutedAll ? 'mute' : 'volume');
   $('mute').classList.toggle('on', state.mutedAll);
-  $('audio').value = state.audio;
+  $('audio').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === state.audio));
 }
 
-function chooseAudio(index) {
-  if (!tiles[index] || !tiles[index].usable) return;
+function chooseAudio(t) {
+  if (!t || !t.usable) return;
   state.mutedAll = false;
-  state.audio = 'solo';
-  state.solo = index;
+  if (state.audio === 'all') {
+    // In "all videos" mode the button mutes or unmutes just this one.
+    t.volume = t.volume > 0 ? 0 : 100;
+    t.parts.volume.value = t.volume;
+  } else {
+    state.solo = t;
+  }
   applyAudio();
-  syncUrl();
 }
 
 // ---------- playback ----------
 
 function seekTile(t, T) {
   if (t.live) return;
-  safe(() => t.player.seekTo(targetTime(t.start, T), true));
+  safe(() => t.player.seek(targetTime(t.start, T)));
 }
 
 function seekAll(T) {
@@ -203,14 +266,16 @@ function seekAll(T) {
 
 function play() {
   state.playing = true;
-  usable().forEach((t) => safe(() => t.player.playVideo()));
+  usable().forEach((t) => safe(() => t.player.play()));
   render();
+  poke();
 }
 
 function pause() {
   state.playing = false;
-  usable().forEach((t) => safe(() => t.player.pauseVideo()));
+  usable().forEach((t) => safe(() => t.player.pause()));
   render();
+  poke();
 }
 
 function togglePlay() {
@@ -230,11 +295,16 @@ function resync() {
   toast('Re-synced');
 }
 
+function liveSeek(t) {
+  if (!t.player.canSeekLive) return;
+  const edge = safe(() => t.player.liveEdge(), 0);
+  if (edge > 0) safe(() => t.player.seek(Math.max(0, edge - t.start)));
+}
+
 function goLive() {
   usable().filter((t) => t.live).forEach((t) => {
-    const edge = safe(() => t.player.getDuration(), 0);
-    if (edge > 0) safe(() => t.player.seekTo(Math.max(0, edge - t.start), true));
-    safe(() => t.player.playVideo());
+    liveSeek(t);
+    safe(() => t.player.play());
   });
   toast('Jumped to live');
 }
@@ -242,42 +312,86 @@ function goLive() {
 /** Shift one video against the others, apply it at once, and keep it in the link. */
 function nudge(t, delta) {
   t.start = Math.max(0, Math.round((t.start + delta) * 10) / 10);
-  if (state.phase === 'running') {
-    if (t.live) {
-      const edge = safe(() => t.player.getDuration(), 0);
-      if (edge > 0) safe(() => t.player.seekTo(Math.max(0, edge - t.start), true));
-    } else {
-      seekTile(t, currentT());
-    }
-  }
+  if (state.phase === 'running') t.live ? liveSeek(t) : seekTile(t, currentT());
   t.lastFix = performance.now();
-  toast(t.live ? `Video ${t.index + 1}: ${t.start.toFixed(1)}s behind live` : `Video ${t.index + 1} starts at ${formatTime(t.start, true)}`);
+  toast(t.live ? `Video ${number(t)}: ${t.start.toFixed(1)}s behind live` : `Video ${number(t)} starts at ${formatTime(t.start, true)}`);
   syncUrl();
 }
 
+/**
+ * "I lined them up by hand": take where every video is right now as the new sync point.
+ * Useful with auto-sync off — pause each video on the same moment, then press this.
+ */
+function lockSync() {
+  if (state.phase !== 'running') return;
+  const snap = snapshot();
+  const T = state.T;
+  let changed = 0;
+  tiles.forEach((t, i) => {
+    if (!snap[i].usable || t.live) return;
+    t.start = Math.max(0, Math.round((snap[i].time - T) * 10) / 10);
+    changed++;
+  });
+  syncUrl();
+  toast(changed ? 'Saved. These positions are now the sync point.' : 'Nothing to save yet');
+}
+
+function sessionQuery() {
+  return buildQuery(tiles.map((t) => ({ ...t.video, start: t.start })), { audio: state.audio });
+}
+
 function syncUrl() {
-  const query = buildQuery(tiles.map((t) => ({ id: t.id, start: t.start })), { audio: state.audio });
-  history.replaceState(null, '', `?${query}`);
-  $('edit').href = `index.html?${query}`;
-  const label = tiles.map((t) => t.title).filter(Boolean).join(' + ').slice(0, 90);
-  rememberSession(tiles.map((t) => t.id).join(','), query, label);
+  const query = sessionQuery();
+  history.replaceState(null, '', query ? `?${query}` : location.pathname);
+  $('edit').href = `index.html${query ? `?${query}` : ''}`;
+  if (!tiles.length) return;
+  const label = tiles.map((t) => t.title || shortName(t.video)).join(' + ').slice(0, 90);
+  rememberSession(tiles.map((t) => videoKey(t.video)).join(','), query, label);
 }
 
 // ---------- start-up: get every video buffered, then release them together ----------
 
-function checkReady() {
-  if (state.phase !== 'loading') return;
-  const pending = tiles.some((t) => t.usable && !t.ready);
-  if (pending) return;
-  if (!tiles.some((t) => t.usable)) {
-    $('start').textContent = 'No playable videos';
-    $('gate-note').textContent = 'None of these videos can be played here. Use Edit to change the list.';
+function updateGate() {
+  if (state.phase !== 'loading' && state.phase !== 'ready') return;
+  const gate = $('gate');
+  gate.hidden = false;
+  const startBtn = $('start');
+  if (!tiles.length) {
+    state.phase = 'loading';
+    $('gate-title').textContent = 'No videos yet';
+    $('gate-note').textContent = 'Add a YouTube, Twitch, Vimeo or video file link to begin.';
+    startBtn.disabled = false;
+    startBtn.lastChild.textContent = 'Add a video';
+    setIcon(startBtn, 'plus');
+    startBtn.dataset.action = 'add';
+    $('play').disabled = true;
     return;
   }
-  state.phase = 'ready';
-  $('start').disabled = false;
-  $('start').textContent = usable().length > 1 ? `Start all ${usable().length} videos` : 'Start video';
-  $('play').disabled = false;
+  setIcon(startBtn, 'play');
+  startBtn.dataset.action = 'start';
+  const pending = tiles.some((t) => t.usable && !t.ready);
+  const count = usable().length;
+  if (pending) {
+    state.phase = 'loading';
+    $('gate-title').textContent = 'Loading videos…';
+    startBtn.disabled = true;
+    startBtn.lastChild.textContent = 'Start';
+  } else if (!count) {
+    state.phase = 'loading';
+    $('gate-title').textContent = 'None of these videos can be played here';
+    $('gate-note').textContent = 'Remove the ones that failed, or add another link.';
+    startBtn.disabled = false;
+    startBtn.lastChild.textContent = 'Add a video';
+    setIcon(startBtn, 'plus');
+    startBtn.dataset.action = 'add';
+  } else {
+    state.phase = 'ready';
+    $('gate-title').textContent = count > 1 ? `${count} videos ready` : 'Video ready';
+    $('gate-note').textContent = 'Browsers only allow sound after a click, so one click here starts every video together.';
+    startBtn.disabled = false;
+    startBtn.lastChild.textContent = count > 1 ? `Start all ${count}` : 'Start';
+  }
+  $('play').disabled = state.phase !== 'ready';
 }
 
 function waitUntil(test, timeoutMs, everyTick = () => {}) {
@@ -297,41 +411,47 @@ async function start() {
   if (state.phase !== 'ready') return;
   state.phase = 'priming';
   $('start').disabled = true;
-  $('start').textContent = 'Getting every video ready…';
+  $('gate-title').textContent = 'Getting every video ready…';
 
   // Muted playback is always allowed, so each video can buffer its start point.
   usable().forEach((t) => {
-    safe(() => t.player.mute());
-    safe(() => t.player.playVideo());
+    safe(() => t.player.setMuted(true));
+    safe(() => t.player.play());
   });
-  // YouTube sometimes drops the first play request (seen in real testing), so ask again every 1.5s.
+  // Players sometimes drop the first play request (seen with real YouTube), so ask again every 1.5s.
   let asked = 0;
   const allPrimed = await waitUntil(() => usable().every((t) => t.primed), 8000, (elapsed) => {
     if (elapsed - asked < 1500) return;
     asked = elapsed;
-    usable().filter((t) => !t.primed).forEach((t) => safe(() => t.player.playVideo()));
+    usable().filter((t) => !t.primed).forEach((t) => safe(() => t.player.play()));
   });
 
   usable().forEach((t) => {
     readInfo(t);
-    if (t.live) {
-      if (t.start > 0) {
-        const edge = safe(() => t.player.getDuration(), 0);
-        if (edge > 0) safe(() => t.player.seekTo(Math.max(0, edge - t.start), true));
-      }
-    } else {
-      safe(() => t.player.seekTo(t.start, true));
-    }
+    if (t.live) { if (t.start > 0) liveSeek(t); }
+    else safe(() => t.player.seek(t.start));
   });
 
   state.phase = 'running';
   state.T = 0;
   $('gate').hidden = true;
-  for (const id of ['back', 'fwd', 'resync']) $(id).disabled = false;
+  for (const id of ['play', 'back', 'fwd', 'resync']) $(id).disabled = false;
+  applyRate();
   applyAudio();
   play();
   syncUrl();
-  if (!allPrimed) toast('Some videos are slow to load — they will catch up');
+  if (!allPrimed) toast('Some videos are slow to load. They will catch up.');
+}
+
+/** A video added while the session is already running slots straight in. */
+function joinRunning(t) {
+  t.primed = true;
+  safe(() => t.player.setMuted(true));
+  if (!t.live) seekTile(t, currentT());
+  if (state.rate !== 1 && t.player.canRate) safe(() => t.player.setRate(state.rate));
+  if (state.playing) safe(() => t.player.play());
+  applyAudio();
+  syncUrl();
 }
 
 function onPlayerState(t, code) {
@@ -339,12 +459,18 @@ function onPlayerState(t, code) {
   if (state.phase === 'priming' && code === STATE.PLAYING && !t.primed) {
     t.primed = true;
     readInfo(t);
-    if (!t.live) safe(() => t.player.pauseVideo()); // hold recorded videos; live keeps buffering
+    if (!t.live) safe(() => t.player.pause()); // hold recorded videos; live keeps buffering
   }
   if (state.phase === 'running' && code === STATE.PLAYING) readInfo(t);
 }
 
+function applyRate() {
+  recorded().forEach((t) => t.player.canRate && safe(() => t.player.setRate(state.rate)));
+}
+
 // ---------- the sync loop ----------
+
+let lastCommand = 0;
 
 function tick() {
   if (state.phase !== 'running') return;
@@ -373,18 +499,18 @@ function tick() {
       const t = tiles[fix.index];
       if (now - t.lastFix < 2500) continue; // give a seek time to land before judging again
       t.lastFix = now;
-      safe(() => t.player.seekTo(fix.to + 0.05, true));
+      safe(() => t.player.seek(fix.to + 0.05));
     }
   }
 
-  // A video that never got going (YouTube dropped the play request) is asked again.
+  // A video that never got going (the player dropped the play request) is asked again.
   // One the user paused inside its own player is left alone.
   if (state.playing) {
     tiles.forEach((t, i) => {
       const stuck = snap[i].usable && (snap[i].state === STATE.UNSTARTED || snap[i].state === STATE.CUED);
       if (stuck && now - t.lastKick > 2000) {
         t.lastKick = now;
-        safe(() => t.player.playVideo());
+        safe(() => t.player.play());
       }
     });
   }
@@ -395,15 +521,18 @@ function tick() {
 
   const status = $('status');
   const waiting = snap.some((s) => s.usable && !s.live && s.state !== STATE.PLAYING && s.state !== STATE.ENDED);
-  if (!state.playing || plan.T == null || recorded().length < 2) status.textContent = '';
-  else if (waiting) status.textContent = 'Waiting for a video…';
-  else if (worst <= settings.threshold) status.textContent = 'In sync';
-  else status.textContent = settings.autoSync ? 'Syncing…' : `Out of sync by ${worst.toFixed(1)}s`;
-  status.classList.toggle('ok', status.textContent === 'In sync');
+  let text = '';
+  let tone = '';
+  if (state.playing && plan.T != null && recorded().length > 1) {
+    if (waiting) text = 'Waiting for a video…';
+    else if (worst <= settings.threshold) { text = 'In sync'; tone = 'ok'; }
+    else { text = settings.autoSync ? 'Syncing…' : `Off by ${worst.toFixed(1)}s`; tone = 'warn'; }
+  }
+  status.textContent = text;
+  status.dataset.tone = tone;
   render(snap);
 }
 
-let lastCommand = 0;
 function render(snap = snapshot()) {
   const total = sharedDuration(snap);
   const timeline = $('timeline');
@@ -411,10 +540,123 @@ function render(snap = snapshot()) {
   timeline.max = total;
   $('total').textContent = total > 0 ? formatTime(total) : tiles.some((t) => t.live) ? 'LIVE' : '0:00';
   if (!state.scrubbing) {
-    timeline.value = clamp(state.T, 0, total || 0);
+    const value = clamp(state.T, 0, total || 0);
+    timeline.value = value;
+    timeline.style.setProperty('--fill', total > 0 ? `${(value / total) * 100}%` : '0%');
     $('now').textContent = formatTime(Math.max(0, state.T));
   }
-  $('play').textContent = state.playing ? 'Pause' : 'Play';
+  const playBtn = $('play');
+  if (playBtn.dataset.icon !== (state.playing ? 'pause' : 'play')) setIcon(playBtn, state.playing ? 'pause' : 'play');
+  playBtn.setAttribute('aria-label', state.playing ? 'Pause' : 'Play');
+}
+
+// ---------- chat ----------
+
+function chatTiles() {
+  return tiles.filter((t) => t.live && t.usable && chatUrl(t.video, true));
+}
+
+function refreshChatButton() {
+  const list = chatTiles();
+  $('chat-btn').hidden = list.length === 0;
+  if (state.chat && !list.includes(state.chat)) closeChat();
+  else if (state.chat) drawChatTabs();
+}
+
+function drawChatTabs() {
+  const list = chatTiles();
+  const tabs = $('chat-tabs');
+  tabs.replaceChildren(...list.map((t) => {
+    const b = Object.assign(document.createElement('button'), { textContent: number(t), title: t.title || shortName(t.video) });
+    b.classList.toggle('on', t === state.chat);
+    b.addEventListener('click', () => openChat(t));
+    return b;
+  }));
+  tabs.hidden = list.length < 2;
+}
+
+function openChat(t = chatTiles()[0]) {
+  if (!t) return;
+  const changed = state.chat !== t;
+  state.chat = t;
+  $('chat').hidden = false;
+  $('chat-btn').classList.add('on');
+  if (changed) $('chat-frame').src = chatUrl(t.video, resolvedTheme() === 'dark');
+  drawChatTabs();
+  layout();
+}
+
+function closeChat() {
+  state.chat = null;
+  $('chat').hidden = true;
+  $('chat-frame').removeAttribute('src');
+  $('chat-btn').classList.remove('on');
+  layout();
+}
+
+// ---------- popovers ----------
+
+function closePops(except) {
+  for (const id of ['menu', 'adder']) if (id !== except) $(id).hidden = true;
+  $('more').setAttribute('aria-expanded', String(!$('menu').hidden));
+}
+
+function togglePop(id) {
+  const el = $(id);
+  const show = el.hidden;
+  closePops(id);
+  el.hidden = !show;
+  $('more').setAttribute('aria-expanded', String(!$('menu').hidden));
+  if (show && id === 'adder') {
+    $('add-error').textContent = '';
+    $('add-input').focus();
+  }
+  poke();
+}
+
+function addFromInput() {
+  const input = $('add-input');
+  const found = parseInput(input.value);
+  const error = $('add-error');
+  error.textContent = '';
+  if (!input.value.trim()) return;
+  if (!found.length) {
+    error.textContent = 'No video found in that link. Supported: YouTube, Twitch, Vimeo, and direct video files (.mp4, .webm).';
+    return;
+  }
+  const room = MAX_VIDEOS - tiles.length;
+  if (room <= 0) {
+    error.textContent = `A session holds up to ${MAX_VIDEOS} videos. Remove one first.`;
+    return;
+  }
+  found.slice(0, room).forEach(addTile);
+  input.value = '';
+  $('adder').hidden = true;
+  layout();
+  applyAudio();
+  updateGate();
+  syncUrl();
+  toast(found.length > 1 ? `${Math.min(found.length, room)} videos added` : 'Video added');
+}
+
+// ---------- auto-hide of the control bar ----------
+
+let idleTimer;
+function setBarHidden(hidden) {
+  if (state.barHidden === hidden) return;
+  state.barHidden = hidden;
+  document.body.classList.toggle('bar-hidden', hidden);
+}
+
+/** Any activity shows the bar again and restarts the countdown. */
+function poke() {
+  clearTimeout(idleTimer);
+  setBarHidden(false);
+  if (!settings.autoHide) return;
+  idleTimer = setTimeout(() => {
+    const busy = !$('menu').hidden || !$('adder').hidden || $('help').open || state.scrubbing;
+    if (state.playing && state.phase === 'running' && !busy) setBarHidden(true);
+  }, 3500);
 }
 
 // ---------- wiring ----------
@@ -426,19 +668,29 @@ function command(fn) {
   };
 }
 
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => toast('Full screen is not available here'));
+  else toast('Full screen is not available on this device');
+}
+
 function wire() {
-  $('start').addEventListener('click', command(start));
+  $('start').addEventListener('click', command(() => ($('start').dataset.action === 'add' ? togglePop('adder') : start())));
   $('play').addEventListener('click', command(togglePlay));
   $('back').addEventListener('click', command(() => seekAll(currentT() - 10)));
   $('fwd').addEventListener('click', command(() => seekAll(currentT() + 10)));
   $('resync').addEventListener('click', command(resync));
+  $('menu-resync').addEventListener('click', command(() => { resync(); closePops(); }));
   $('golive').addEventListener('click', command(goLive));
-  $('grid').addEventListener('click', () => state.focus != null && setFocus(state.focus));
+  $('grid').addEventListener('click', () => state.focus && setFocus(state.focus));
+  $('lock').addEventListener('click', () => { lockSync(); closePops(); });
 
   const timeline = $('timeline');
   timeline.addEventListener('input', () => {
     state.scrubbing = true;
-    $('now').textContent = formatTime(Number(timeline.value));
+    const value = Number(timeline.value);
+    timeline.style.setProperty('--fill', `${(value / (Number(timeline.max) || 1)) * 100}%`);
+    $('now').textContent = formatTime(value);
   });
   timeline.addEventListener('change', command(() => {
     state.scrubbing = false;
@@ -450,14 +702,28 @@ function wire() {
     settings.autoSync = e.target.checked;
     saveSettings(settings);
   });
+  $('threshold').value = String(settings.threshold);
+  $('threshold').addEventListener('change', (e) => {
+    settings.threshold = Number(e.target.value) || 0.5;
+    saveSettings(settings);
+  });
+  $('autohide').checked = settings.autoHide;
+  $('autohide').addEventListener('change', (e) => {
+    settings.autoHide = e.target.checked;
+    saveSettings(settings);
+    poke();
+  });
   $('volume').value = settings.volume;
   $('volume').addEventListener('input', (e) => {
     settings.volume = Number(e.target.value);
     saveSettings(settings);
+    if (state.mutedAll && settings.volume > 0) state.mutedAll = false;
     applyAudio();
   });
-  $('audio').addEventListener('change', (e) => {
-    state.audio = e.target.value;
+  $('audio').addEventListener('click', (e) => {
+    const value = e.target.closest('button')?.dataset.value;
+    if (!value) return;
+    state.audio = value;
     state.mutedAll = false;
     applyAudio();
     syncUrl();
@@ -467,11 +733,23 @@ function wire() {
     applyAudio();
   });
   $('speed').addEventListener('change', (e) => {
-    const rate = Number(e.target.value);
-    recorded().forEach((t) => safe(() => t.player.setPlaybackRate(rate)));
+    state.rate = Number(e.target.value) || 1;
+    applyRate();
+    if (usable().some((t) => !t.live && !t.player.canRate)) toast('Twitch videos cannot change speed, so they will be re-synced often');
   });
+  $('theme').addEventListener('click', (e) => {
+    const value = e.target.closest('button')?.dataset.value;
+    if (value) setTheme(value);
+  });
+  onTheme((mode) => {
+    Object.assign(settings, { theme: mode });
+    $('theme').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === mode));
+    if (state.chat) $('chat-frame').src = chatUrl(state.chat.video, resolvedTheme() === 'dark');
+  });
+
   $('share').addEventListener('click', async () => {
     syncUrl();
+    closePops();
     try {
       await navigator.clipboard.writeText(location.href);
       toast('Link copied');
@@ -480,22 +758,46 @@ function wire() {
     }
   });
   $('full').addEventListener('click', toggleFullscreen);
+  $('menu-full').addEventListener('click', () => { closePops(); toggleFullscreen(); });
+  $('more').addEventListener('click', () => togglePop('menu'));
+  $('add').addEventListener('click', () => togglePop('adder'));
+  $('add-go').addEventListener('click', addFromInput);
+  $('add-input').addEventListener('keydown', (e) => e.key === 'Enter' && addFromInput());
+  $('help-btn').addEventListener('click', () => { closePops(); $('help').showModal(); });
+  $('chat-btn').addEventListener('click', () => (state.chat ? closeChat() : openChat()));
+  $('chat-close').addEventListener('click', closeChat);
+
+  document.addEventListener('pointerdown', (e) => {
+    if (!e.target.closest('.pop, #more, #add, #start')) closePops();
+  });
+  for (const type of ['pointermove', 'pointerdown', 'keydown', 'touchstart']) document.addEventListener(type, poke, { passive: true });
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closePops(); return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const key = e.key.toLowerCase();
     const target = e.target instanceof Element ? e.target : null;
     // Let form fields keep their own keys, and let Space/Enter press a focused button as usual.
-    if (target?.closest('input, select, textarea')) return;
+    if (target?.closest('input, select, textarea, dialog')) return;
     if (target?.closest('button, a') && (key === ' ' || key === 'enter')) return;
+    const running = state.phase === 'running';
     if (key === ' ') { e.preventDefault(); command(togglePlay)(); }
-    else if (key === 'arrowleft' && state.phase === 'running') { e.preventDefault(); command(() => seekAll(currentT() - 10))(); }
-    else if (key === 'arrowright' && state.phase === 'running') { e.preventDefault(); command(() => seekAll(currentT() + 10))(); }
+    else if (key === 'arrowleft' && running) { e.preventDefault(); command(() => seekAll(currentT() - 10))(); }
+    else if (key === 'arrowright' && running) { e.preventDefault(); command(() => seekAll(currentT() + 10))(); }
+    else if (key === ',' && running) command(() => seekAll(currentT() - 1))();
+    else if (key === '.' && running) command(() => seekAll(currentT() + 1))();
     else if (key === 'm') $('mute').click();
     else if (key === 's') command(resync)();
     else if (key === 'f') toggleFullscreen();
-    else if (key === 'g' && state.focus != null) setFocus(state.focus);
-    else if (/^[1-9]$/.test(key)) chooseAudio(Number(key) - 1);
+    else if (key === 'g' && state.focus) setFocus(state.focus);
+    else if (key === 'a') { e.preventDefault(); togglePop('adder'); }
+    else if (key === 'c' && !$('chat-btn').hidden) $('chat-btn').click();
+    else if (key === 'h') { settings.autoHide = !settings.autoHide; $('autohide').checked = settings.autoHide; saveSettings(settings); poke(); toast(settings.autoHide ? 'Controls hide while playing' : 'Controls stay visible'); }
+    else if (key === '?') $('help').showModal();
+    else if (/^[1-9]$/.test(key) && tiles[Number(key) - 1]) {
+      state.audio = 'solo';
+      chooseAudio(tiles[Number(key) - 1]);
+    }
   });
 
   // After a mouse click, hand focus back to the page so Space keeps meaning play/pause.
@@ -504,82 +806,21 @@ function wire() {
     if (e.detail > 0) e.target.closest?.('button')?.blur();
   });
 
-  new ResizeObserver(layout).observe(stage);
+  new ResizeObserver(layout).observe(stage.parentElement);
 }
 
-function toggleFullscreen() {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen?.().catch(() => toast('Full screen is not available here'));
-}
-
-function loadYouTubeApi() {
-  return new Promise((resolve, reject) => {
-    if (window.YT && window.YT.Player) return resolve();
-    const timer = setTimeout(() => reject(new Error('timeout')), 15000);
-    const previous = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => {
-      clearTimeout(timer);
-      previous?.();
-      resolve();
-    };
-    const script = document.createElement('script');
-    script.src = 'https://www.youtube.com/iframe_api';
-    script.onerror = () => {
-      clearTimeout(timer);
-      reject(new Error('blocked'));
-    };
-    document.head.append(script);
-  });
-}
-
-function createPlayers() {
-  for (const t of tiles) {
-    t.player = new window.YT.Player(`player-${t.index}`, {
-      host: 'https://www.youtube-nocookie.com', // YouTube's privacy-enhanced player
-      videoId: t.id,
-      width: '100%',
-      height: '100%',
-      playerVars: { playsinline: 1, rel: 0, start: Math.floor(t.start), origin: location.origin },
-      events: {
-        onReady: () => {
-          t.ready = true;
-          readInfo(t);
-          if (!t.title) t.parts.title.textContent = `Video ${t.index + 1}`;
-          checkReady();
-        },
-        onStateChange: (e) => onPlayerState(t, e.data),
-        onError: (e) => failTile(t, ERRORS[e.data] || `YouTube reported error ${e.data}.`),
-      },
-    });
-  }
-}
-
-async function main() {
-  if (!tiles.length) {
-    $('gate').innerHTML = '<p>No videos in this link.</p><a class="btn primary" href="index.html">Add videos</a>';
-    return;
-  }
-  $('edit').href = `index.html${location.search}`;
-  tiles.forEach(buildTile);
+function main() {
+  hydrateIcons();
   wire();
+  if (location.protocol === 'file:') {
+    banner('This page is opened as a file, and video sites block players on file pages. Run "npm start" in the project folder and open http://localhost:8080 instead.');
+  }
+  session.videos.slice(0, MAX_VIDEOS).forEach(addTile);
+  $('edit').href = `index.html${location.search}`;
   layout();
   applyAudio();
-  if (location.protocol === 'file:') {
-    banner('This page is opened as a file, and YouTube blocks players on file pages. Run <code>npm start</code> in the project folder and open <code>http://localhost:8080</code> instead.');
-  }
-  try {
-    await loadYouTubeApi();
-  } catch {
-    banner('The YouTube player could not be loaded. Check your connection, or allow youtube.com in your ad blocker, then reload.');
-    $('start').textContent = 'YouTube player blocked';
-    return;
-  }
-  createPlayers();
+  updateGate();
   setInterval(tick, 500);
-  // A video that never answers must not hold the others hostage.
-  setTimeout(() => {
-    tiles.filter((t) => t.usable && !t.ready).forEach((t) => failTile(t, 'This video did not load in time.'));
-  }, 20000);
 }
 
 main();

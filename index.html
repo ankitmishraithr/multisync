@@ -2,64 +2,103 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="strict-origin-when-cross-origin">
-  <title>MultiSync — watch several YouTube videos and live streams in sync</title>
-  <meta name="description" content="Put several YouTube videos or live streams side by side and keep them in sync. No account, no tracking.">
+  <meta name="color-scheme" content="light dark">
+  <title>MultiSync — watch several videos and live streams in sync</title>
+  <meta name="description" content="Put several YouTube, Twitch or Vimeo videos and live streams side by side and keep them in sync. No account, no tracking.">
+  <script>
+    try {
+      var t = (JSON.parse(localStorage.getItem('multisync.settings') || '{}').theme) || 'auto';
+      document.documentElement.dataset.theme = t === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : t;
+    } catch (e) { document.documentElement.dataset.theme = 'light'; }
+  </script>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+  <header class="top">
+    <a class="brand" href="index.html"><i></i>MultiSync</a>
+    <button id="theme" class="icon-btn" data-icon="auto" aria-label="Theme" title="Theme"></button>
+  </header>
+
   <main class="page">
-    <h1 class="brand">Multi<span>Sync</span></h1>
-    <p class="lead">Watch several YouTube videos or live streams side by side, kept in sync.</p>
-
-    <section class="card">
-      <h2>1. Add videos <small>— paste one link per line</small></h2>
-      <textarea id="paste" placeholder="https://www.youtube.com/watch?v=…&#10;https://youtu.be/…&#10;https://www.youtube.com/live/…" aria-label="YouTube links"></textarea>
-      <p class="error" id="paste-error" role="alert"></p>
-      <div class="row end">
-        <button id="add" class="primary">Add</button>
-      </div>
-      <p class="note">Works with watch, youtu.be, live, shorts and embed links, plain video IDs, and existing ViewSync links.</p>
-    </section>
-
-    <section class="card">
-      <h2>2. Set where each video starts <small>— optional</small></h2>
-      <ul class="videos" id="videos"></ul>
-      <p class="empty" id="empty">No videos yet.</p>
-      <p class="note">Start time accepts <code>90</code>, <code>1:30</code> or <code>1m30s</code>. For a live stream it means "seconds behind live". You can fine-tune in 0.1s steps while watching.</p>
-    </section>
-
-    <section class="card">
-      <h2>3. Watch</h2>
-      <div class="row">
-        <label><input type="radio" name="audio" value="solo" checked> Sound from one video at a time</label>
-        <label><input type="radio" name="audio" value="all"> Sound from all videos</label>
-      </div>
-      <div class="row" style="margin-top:12px">
-        <input type="text" class="link" id="link" readonly aria-label="Shareable link">
-        <button id="copy">Copy link</button>
-        <a class="btn primary" id="go" href="#">Watch in sync</a>
-      </div>
-    </section>
-
-    <section class="card" id="recent-card" hidden>
-      <h2>Recent sessions <small>— saved only in this browser</small></h2>
-      <ul class="recent" id="recent"></ul>
-      <div class="row end"><button id="clear-recent">Clear list</button></div>
-    </section>
-
-    <section class="card help">
-      <h2>Keyboard shortcuts while watching</h2>
-      <ul>
-        <li><kbd>Space</kbd> play / pause all</li>
-        <li><kbd>←</kbd> <kbd>→</kbd> back / forward 10 seconds</li>
-        <li><kbd>1</kbd>–<kbd>9</kbd> switch sound to that video</li>
-        <li><kbd>M</kbd> mute all · <kbd>S</kbd> re-sync now · <kbd>F</kbd> full screen · <kbd>G</kbd> back to grid</li>
+    <section class="hero">
+      <h1>Watch several videos side by side, in sync.</h1>
+      <p>Paste the links, press Watch. Works for recordings and live streams.</p>
+      <ul class="sources" aria-label="Supported sources">
+        <li>YouTube</li><li>YouTube Live</li><li>Twitch</li><li>Vimeo</li><li>MP4 / WebM links</li>
       </ul>
-      <p class="note">Shortcuts work when the page itself has focus. After clicking inside a video, click the control bar once to get them back.</p>
     </section>
+
+    <div class="paste">
+      <textarea id="paste" rows="1" placeholder="Paste one or more links here" aria-label="Video links"></textarea>
+      <button id="add" class="btn primary" data-icon="plus">Add</button>
+    </div>
+    <p class="error" id="paste-error" role="alert"></p>
+
+    <div class="section-title">
+      <h2 id="list-title">Your videos</h2>
+      <button id="clear" class="btn quiet" hidden>Remove all</button>
+    </div>
+    <ul class="videos" id="videos"></ul>
+    <p class="empty" id="empty">Nothing added yet. Paste a link above to begin.</p>
+
+    <div class="options" id="options" hidden>
+      <div class="row">
+        <span class="note">Sound from</span>
+        <div class="seg" id="audio">
+          <button data-value="solo" class="on">One video</button>
+          <button data-value="all">All videos</button>
+        </div>
+      </div>
+      <button id="save" class="btn quiet">Save this set…</button>
+    </div>
+
+    <section id="saved-section" hidden>
+      <div class="section-title"><h2>Saved sets</h2></div>
+      <ul class="lists" id="saved"></ul>
+    </section>
+
+    <section id="recent-section" hidden>
+      <div class="section-title">
+        <h2>Recently watched</h2>
+        <button id="clear-recent" class="btn quiet">Clear</button>
+      </div>
+      <ul class="lists" id="recent"></ul>
+    </section>
+
+    <details class="help">
+      <summary>How syncing works</summary>
+      <ol>
+        <li>Each video has a start time. All videos begin at their own start time together.</li>
+        <li>Start time accepts <kbd>90</kbd>, <kbd>1:30</kbd> or <kbd>1m30s</kbd>. For a live stream it means "seconds behind live".</li>
+        <li>While watching, shift any video in 0.1 second steps until they line up. The link updates as you go.</li>
+        <li>The page then checks every half second and pulls back any video that drifts.</li>
+        <li>Everything is saved only in this browser. Nothing is uploaded.</li>
+      </ol>
+    </details>
   </main>
+
+  <div class="launch">
+    <div class="inner">
+      <span class="count" id="count">Add at least one video</span>
+      <button id="copy" class="btn" data-icon="link" disabled>Copy link</button>
+      <a id="go" class="btn primary" data-icon="play" href="#" aria-disabled="true">Watch in sync</a>
+    </div>
+  </div>
+
+  <dialog id="save-dialog">
+    <h2>Save this set</h2>
+    <form method="dialog" id="save-form">
+      <label for="save-name" class="note">Name</label>
+      <input type="text" id="save-name" maxlength="60" placeholder="e.g. Morning market streams" required>
+      <div class="row" style="justify-content:flex-end;margin-top:16px">
+        <button type="button" class="btn" id="save-cancel">Cancel</button>
+        <button class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <script type="module" src="js/builder.js"></script>
 </body>
 </html>

@@ -1,23 +1,15 @@
-import { parseInput, parseTime, formatTime, buildQuery, parseWatch } from './parse.js';
-import { loadRecent, clearRecent } from './store.js';
+import { parseInput, parseTime, formatTime, buildQuery, parseWatch, sourceUrl, shortName, SOURCE_LABEL } from './parse.js';
+import { loadRecent, clearRecent, loadSaved, saveNamed, removeSaved } from './store.js';
+import { hydrateIcons, setIcon, icon } from './icons.js';
+import { cycleTheme, onTheme } from './theme.js';
 
 const $ = (id) => document.getElementById(id);
 const MAX_VIDEOS = 16;
 
-// Arriving from the watch page's "Edit" button brings the videos along.
+// Arriving from the watch page's "Edit" brings the videos along.
 const incoming = parseWatch(location.search);
-let videos = incoming.videos;
-if (incoming.audio === 'all') document.querySelector('input[name=audio][value=all]').checked = true;
-
-function audioMode() {
-  return document.querySelector('input[name=audio]:checked').value;
-}
-
-function watchUrl() {
-  const url = new URL('watch.html', location.href);
-  url.search = buildQuery(videos, { audio: audioMode() });
-  return url.href;
-}
+let videos = incoming.videos.slice(0, MAX_VIDEOS);
+let audio = incoming.audio;
 
 function el(tag, props = {}, children = []) {
   const node = Object.assign(document.createElement(tag), props);
@@ -25,11 +17,34 @@ function el(tag, props = {}, children = []) {
   return node;
 }
 
+function iconButton(name, label, onClick, disabled = false) {
+  const b = el('button', { className: 'icon-btn', title: label, disabled, onclick: onClick });
+  b.innerHTML = icon(name);
+  b.setAttribute('aria-label', label);
+  return b;
+}
+
+function watchUrl() {
+  const url = new URL('watch.html', location.href);
+  url.search = buildQuery(videos, { audio });
+  return url.href;
+}
+
+function thumb(video) {
+  if (video.kind === 'youtube') {
+    const img = el('img', { className: 'thumb', src: `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`, alt: '', loading: 'lazy' });
+    img.addEventListener('error', () => img.replaceWith(el('div', { className: 'thumb', textContent: 'YouTube' })));
+    return img;
+  }
+  return el('div', { className: 'thumb', textContent: SOURCE_LABEL[video.kind] });
+}
+
 function render() {
   const list = $('videos');
   list.replaceChildren();
   videos.forEach((video, i) => {
-    const time = el('input', { type: 'text', value: formatTime(video.start, video.start % 1 !== 0), id: `start-${i}` });
+    const live = video.kind === 'twitch';
+    const time = el('input', { type: 'text', value: formatTime(video.start, video.start % 1 !== 0), id: `start-${i}`, inputMode: 'decimal' });
     time.addEventListener('change', () => {
       video.start = parseTime(time.value);
       render();
@@ -39,29 +54,35 @@ function render() {
       [videos[i], videos[j]] = [videos[j], videos[i]];
       render();
     };
+    const meta = el('div', {}, [
+      el('a', { className: 'name', href: sourceUrl(video), target: '_blank', rel: 'noopener', textContent: shortName(video) }),
+      el('span', { className: 'kind', textContent: SOURCE_LABEL[video.kind] }),
+    ]);
+    if (!live) meta.append(el('label', { className: 'start', htmlFor: `start-${i}`, textContent: 'Start at' }, [time]));
     list.append(
       el('li', {}, [
         el('span', { className: 'n', textContent: i + 1 }),
-        el('img', { src: `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`, alt: '', loading: 'lazy' }),
-        el('div', { className: 'meta' }, [
-          el('a', { href: `https://www.youtube.com/watch?v=${video.id}`, target: '_blank', rel: 'noopener', textContent: video.id }),
-          el('label', { htmlFor: `start-${i}`, textContent: 'Start at ' }, [time]),
-        ]),
+        thumb(video),
+        meta,
         el('div', { className: 'acts' }, [
-          el('button', { textContent: '↑', title: 'Move up', ariaLabel: `Move video ${i + 1} up`, disabled: i === 0, onclick: move(-1) }),
-          el('button', { textContent: '↓', title: 'Move down', ariaLabel: `Move video ${i + 1} down`, disabled: i === videos.length - 1, onclick: move(1) }),
-          el('button', { textContent: 'Remove', onclick: () => { videos.splice(i, 1); render(); } }),
+          iconButton('up', `Move video ${i + 1} up`, move(-1), i === 0),
+          iconButton('down', `Move video ${i + 1} down`, move(1), i === videos.length - 1),
+          iconButton('close', `Remove video ${i + 1}`, () => { videos.splice(i, 1); render(); }),
         ]),
       ]),
     );
   });
-  $('empty').hidden = videos.length > 0;
+
   const ready = videos.length > 0;
-  $('link').value = ready ? watchUrl() : '';
+  $('empty').hidden = ready;
+  $('options').hidden = !ready;
+  $('clear').hidden = videos.length < 2;
+  $('list-title').textContent = ready ? `Your videos (${videos.length})` : 'Your videos';
+  $('count').textContent = ready ? `${videos.length} video${videos.length === 1 ? '' : 's'} ready` : 'Add at least one video';
   $('go').href = ready ? watchUrl() : '#';
   $('go').setAttribute('aria-disabled', String(!ready));
-  $('go').style.opacity = ready ? 1 : 0.45;
   $('copy').disabled = !ready;
+  $('audio').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === audio));
 }
 
 function addFromPaste() {
@@ -71,53 +92,84 @@ function addFromPaste() {
   error.textContent = '';
   if (!text.trim()) return;
   if (!found.length) {
-    error.textContent = 'No YouTube video found in that text. Paste a link like https://www.youtube.com/watch?v=…';
+    error.textContent = 'No video found in that text. Supported: YouTube, Twitch, Vimeo, and direct video file links (.mp4, .webm).';
     return;
   }
-  const room = MAX_VIDEOS - videos.length;
-  if (found.length > room) error.textContent = `Only ${MAX_VIDEOS} videos fit in one session — added the first ${Math.max(0, room)}.`;
-  videos.push(...found.slice(0, Math.max(0, room)));
+  const room = Math.max(0, MAX_VIDEOS - videos.length);
+  if (found.length > room) error.textContent = `One session holds up to ${MAX_VIDEOS} videos. Added the first ${room}.`;
+  videos.push(...found.slice(0, room));
   $('paste').value = '';
   render();
 }
 
 $('add').addEventListener('click', addFromPaste);
 $('paste').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) addFromPaste();
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    addFromPaste();
+  }
 });
 $('paste').addEventListener('paste', () => setTimeout(addFromPaste, 0));
-document.querySelectorAll('input[name=audio]').forEach((r) => r.addEventListener('change', render));
-$('go').addEventListener('click', (e) => {
-  if (!videos.length) e.preventDefault();
+$('clear').addEventListener('click', () => { videos = []; render(); });
+$('audio').addEventListener('click', (e) => {
+  const value = e.target.closest('button')?.dataset.value;
+  if (value) { audio = value; render(); }
 });
+$('go').addEventListener('click', (e) => { if (!videos.length) e.preventDefault(); });
 $('copy').addEventListener('click', async () => {
+  const label = $('copy').lastChild;
   try {
-    await navigator.clipboard.writeText($('link').value);
-    $('copy').textContent = 'Copied';
+    await navigator.clipboard.writeText(watchUrl());
+    label.textContent = 'Copied';
   } catch {
-    $('link').select();
-    $('copy').textContent = 'Press Ctrl/Cmd+C';
+    label.textContent = 'Copy failed';
   }
-  setTimeout(() => ($('copy').textContent = 'Copy link'), 1500);
+  setTimeout(() => (label.textContent = 'Copy link'), 1500);
 });
 
-function renderRecent() {
-  const items = loadRecent();
-  $('recent-card').hidden = items.length === 0;
-  $('recent').replaceChildren(
-    ...items.map((item) => {
-      const count = parseWatch('?' + item.query).videos.length;
-      return el('li', {}, [
-        el('a', { href: `watch.html?${item.query}`, textContent: item.label || `${count} video${count === 1 ? '' : 's'}` }),
-        el('time', { textContent: new Date(item.at).toLocaleString() }),
-      ]);
-    }),
-  );
+// ---------- saved sets and recent sessions (this browser only) ----------
+
+function sessionRow(query, label, right) {
+  const count = parseWatch('?' + query).videos.length;
+  return el('li', {}, [el('a', { href: `watch.html?${query}`, textContent: label || `${count} video${count === 1 ? '' : 's'}` }), ...right]);
 }
-$('clear-recent').addEventListener('click', () => {
-  clearRecent();
-  renderRecent();
+
+function renderLists() {
+  const saved = loadSaved();
+  $('saved-section').hidden = saved.length === 0;
+  $('saved').replaceChildren(...saved.map((item) => sessionRow(item.query, item.name, [
+    iconButton('edit', `Edit ${item.name}`, () => { location.href = `index.html?${item.query}`; }),
+    iconButton('close', `Delete ${item.name}`, () => { removeSaved(item.name); renderLists(); }),
+  ])));
+  const recent = loadRecent();
+  $('recent-section').hidden = recent.length === 0;
+  $('recent').replaceChildren(...recent.map((item) => sessionRow(item.query, item.label, [
+    el('time', { textContent: new Date(item.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) }),
+  ])));
+}
+
+$('clear-recent').addEventListener('click', () => { clearRecent(); renderLists(); });
+$('save').addEventListener('click', () => {
+  $('save-name').value = '';
+  $('save-dialog').showModal();
+});
+$('save-cancel').addEventListener('click', () => $('save-dialog').close());
+$('save-form').addEventListener('submit', () => {
+  // Read the name now: by the time the dialog's close event fires, focus has already moved on.
+  const name = $('save-name').value.trim();
+  if (!name || !videos.length) return;
+  saveNamed(name, buildQuery(videos, { audio }));
+  renderLists();
 });
 
+$('theme').addEventListener('click', cycleTheme);
+onTheme((mode) => {
+  setIcon($('theme'), { auto: 'auto', light: 'sun', dark: 'moon' }[mode]);
+  const label = { auto: 'Theme: follows your device', light: 'Theme: day', dark: 'Theme: night' }[mode];
+  $('theme').title = label;
+  $('theme').setAttribute('aria-label', label);
+});
+
+hydrateIcons();
 render();
-renderRecent();
+renderLists();

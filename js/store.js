@@ -3,8 +3,9 @@
 
 const SETTINGS_KEY = 'multisync.settings';
 const RECENT_KEY = 'multisync.recent';
+const SAVED_KEY = 'multisync.saved';
 
-export const DEFAULTS = { volume: 100, autoSync: true, threshold: 0.5 };
+export const DEFAULTS = { volume: 100, autoSync: true, threshold: 0.5, theme: 'auto', autoHide: false };
 
 function read(key, fallback) {
   try {
@@ -19,34 +20,31 @@ function write(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    /* ignore: settings just won't persist */
+    /* ignore: it just won't persist */
   }
 }
 
-export function loadSettings() {
-  return { ...DEFAULTS, ...read(SETTINGS_KEY, {}) };
-}
+const list = (key) => {
+  const value = read(key, []);
+  return Array.isArray(value) ? value : [];
+};
 
-export function saveSettings(settings) {
-  write(SETTINGS_KEY, settings);
-}
+export const loadSettings = () => ({ ...DEFAULTS, ...read(SETTINGS_KEY, {}) });
+export const saveSettings = (settings) => write(SETTINGS_KEY, settings);
 
-export function loadRecent() {
-  const list = read(RECENT_KEY, []);
-  return Array.isArray(list) ? list : [];
-}
-
-/** Remember a session (keyed by its video IDs so re-tuning offsets doesn't pile up entries). */
+export const loadRecent = () => list(RECENT_KEY);
+/** Remember a session (keyed by its videos so re-tuning offsets doesn't pile up entries). */
 export function rememberSession(key, query, label) {
-  const list = loadRecent().filter((item) => item.key !== key);
-  list.unshift({ key, query, label, at: Date.now() });
-  write(RECENT_KEY, list.slice(0, 8));
+  const items = loadRecent().filter((item) => item.key !== key);
+  items.unshift({ key, query, label, at: Date.now() });
+  write(RECENT_KEY, items.slice(0, 8));
 }
+export const clearRecent = () => write(RECENT_KEY, []);
 
-export function clearRecent() {
-  try {
-    localStorage.removeItem(RECENT_KEY);
-  } catch {
-    /* ignore */
-  }
+export const loadSaved = () => list(SAVED_KEY);
+export function saveNamed(name, query) {
+  const items = loadSaved().filter((item) => item.name !== name);
+  items.unshift({ name, query, at: Date.now() });
+  write(SAVED_KEY, items.slice(0, 30));
 }
+export const removeSaved = (name) => write(SAVED_KEY, loadSaved().filter((item) => item.name !== name));

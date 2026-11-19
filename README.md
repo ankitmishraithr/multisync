@@ -1,31 +1,37 @@
 # MultiSync
 
-Watch several YouTube videos or live streams side by side, kept in sync.
-A from-scratch rebuild of the idea behind [viewsync.net](https://viewsync.net/), with its problems fixed.
+Watch several videos or live streams side by side, kept in sync.
+A from-scratch rebuild of the idea behind [viewsync.net](https://viewsync.net/), with its problems fixed and more sources added.
 
-- No build step, no dependencies, no server code: plain HTML, CSS and JavaScript.
-- No accounts, no analytics, no API key. Settings stay in your browser.
+- Sources: YouTube (videos and live), Twitch (live channels and recorded videos), Vimeo, and direct video file links (`.mp4`, `.webm`).
+- Day and night themes. "Auto" follows your device.
+- Works from a 320px phone to an ultrawide monitor.
+- No build step, no dependencies, no server code, no accounts, no analytics, no API keys.
 - Cost to run: zero. Any static host works (GitHub Pages, Netlify, S3 + CloudFront).
 
 ## Run it
 
 1. Open a terminal in this folder.
 2. Run `npm start` (or `python3 -m http.server 8080`).
-3. Open `http://localhost:8080` in your browser.
-4. Paste YouTube links, press **Add**, then **Watch in sync**.
-5. Click **Start all videos** once.
+3. Open `http://localhost:8080` in your browser. Use `localhost`, not `127.0.0.1`: Twitch refuses raw IP addresses.
+4. Paste links, press **Add**, then **Watch in sync**.
+5. Click **Start** once.
 
-Do not open `index.html` by double-clicking it. YouTube refuses to play on `file://` pages (error 153); the page tells you this if it happens.
+Do not open `index.html` by double-clicking it. Video sites refuse to play on `file://` pages; the page tells you if this happens.
 
-## Use it
+## Features
 
-1. **Add videos**: one link per line. Watch, `youtu.be`, live, shorts and embed links work, as do plain video IDs and old ViewSync links.
-2. **Set start times** (optional): `90`, `1:30` or `1m30s`. For a live stream the number means "seconds behind live".
-3. **Fine-tune while watching**: hover a video and use **−0.1s / +0.1s** (hold Shift for 1s). The link in the address bar updates, so what you share is what you tuned.
-4. **Sound**: press `1`–`9` or the **Sound** button on a video to hear that one. Switch to "All videos" to mix.
-5. **Focus**: makes one video large and puts the rest in a strip. `G` returns to the grid.
-
-Shortcuts: `Space` play/pause, `←` `→` 10s, `M` mute, `S` re-sync, `F` full screen.
+1. **One-click start.** Every video buffers muted, then all are released together.
+2. **Automatic sync.** Checked every half second; a drifted video is pulled back. Tolerance is adjustable (0.3s to 2s).
+3. **Fine-tune while watching.** Shift any video in 0.1s steps (Shift-click for 1s). The link updates as you go.
+4. **Save a manual line-up.** Turn auto-sync off, line videos up by hand, then choose "Save current positions as the sync point".
+5. **Add and remove videos while watching.** The others keep playing.
+6. **Sound.** Hear one video at a time (keys `1`–`9`), or mix all with a volume slider per video.
+7. **Layouts.** Automatic grid, Focus (one big, the rest in a strip), and a scrolling column on phones with many videos.
+8. **Live streams.** LIVE badge, "Go live" button, never dragged by the sync loop, and a live chat panel for YouTube and Twitch.
+9. **Hide controls while playing.** They return when you move the mouse or tap.
+10. **Saved sets and recent sessions**, kept only in your browser.
+11. **Speed control**, full screen, and keyboard shortcuts (press `?` while watching).
 
 ## What was wrong with ViewSync, and what changed
 
@@ -33,49 +39,70 @@ Found by testing the live site on 19 Nov 2026.
 
 | # | Problem on viewsync.net | Here |
 |---|---|---|
-| 1 | Every video is labelled "Error". The site asks the YouTube Data API for the channel name and that call fails. | Title and channel come from the player itself. No API key, nothing to break. |
-| 2 | You must click every video one by one to start it. | One click starts all of them. Videos buffer muted first, then are released together. |
+| 1 | Every video is labelled "Error": its channel-name lookup fails. | Titles come from the player itself. No API key. |
+| 2 | You must click every video one by one to start. | One click starts all. |
 | 3 | A start time like `t=10` is ignored; only `t=10s` works. | `10`, `10s`, `1m30s` and `1:30` all work. |
-| 4 | Sync is set once at the start. If one video buffers, it stays behind. | A loop checks every half second and pulls a drifted video back. Per-video drift is shown. |
-| 5 | Offsets can only be set on the first page, by trial and error. | Nudge each video in 0.1s steps while it plays. |
-| 6 | Three videos leave a dead quarter of the screen; layout is a fixed grid. | The grid picks the shape with the largest tiles and centres a short last row. Focus mode added. |
-| 7 | The quality menu calls `setPlaybackQuality`, which YouTube turned into a no-op years ago. | Removed. YouTube picks quality from tile size; each player's own gear menu still works. |
-| 8 | No live stream handling. | Live streams get a LIVE badge, are left out of the shared timeline, are never dragged by the sync loop, and have a **Go live** button. |
-| 9 | A broken or blocked video shows YouTube's raw error. | The tile says why in plain words, links to YouTube, and the other videos carry on. |
-| 10 | Pinch-zoom is disabled on phones; the page is not usable on a narrow screen. | Zoom allowed; the layout stacks on phones. |
-| 11 | No keyboard shortcuts, nothing remembered. | Shortcuts; volume, auto-sync and recent sessions are remembered locally. |
-| 12 | Loads a visitor counter and jQuery 1.8 (2012). | No trackers, no libraries. Uses YouTube's privacy-enhanced player (`youtube-nocookie.com`). |
+| 4 | Sync is set once. A video that buffers stays behind. | Continuous correction, with per-video drift shown. |
+| 5 | Offsets are set on the first page by trial and error. | Nudge while playing, or save a manual line-up. |
+| 6 | Three videos leave a dead quarter of the screen. | Grid picks the largest tiles and centres a short last row. |
+| 7 | No live stream handling in its code. | Live badge, Go live, chat, excluded from the shared timeline. |
+| 8 | A blocked video shows a raw error. | Plain-words message, link to the original, others carry on. |
+| 9 | Pinch-zoom disabled; not usable on a phone. | Fully responsive; zoom allowed. |
+| 10 | No shortcuts; nothing remembered. | Shortcuts; settings, saved sets and recents remembered locally. |
+| 11 | YouTube only. | YouTube, Twitch, Vimeo, direct files. |
+| 12 | Loads a visitor counter and jQuery 1.8 (2012). | No trackers, no libraries. |
+
+## Privacy
+
+1. Nothing you paste leaves your browser, except to the video site that plays it.
+2. YouTube plays through its privacy-enhanced player (`youtube-nocookie.com`); Vimeo is asked not to track (`dnt`).
+3. Each video site's script is loaded only if you use a video from that site.
+4. The video sites still see that you watched, as with any embedded player.
 
 ## Limits you should know
 
-- Sync accuracy is about ±0.5s by default. YouTube's player only reports its position a few times a second, so frame-exact sync is not possible from a web page.
-- Two live streams of the same event usually have different delays. Use the nudge buttons to line them up by ear; the page cannot measure this for you.
+- Sync accuracy is about ±0.5s. Web players report position only a few times a second, so frame-exact sync is not possible.
+- Two live streams of the same event have different delays. Line them up by ear with the nudge buttons (YouTube live only; Twitch live cannot be shifted).
+- Twitch has no speed control, so at speeds other than 1× a Twitch video is re-synced repeatedly.
+- `.m3u8` (HLS) links play in Safari only. Chrome and Firefox cannot play them without an extra library, which this project deliberately avoids.
+- A direct file link works only if the file's server allows other sites to play it.
 - Some videos cannot be embedded anywhere (owner's choice). They show a message instead.
-- Ads are YouTube's. A video showing an ad is behind until the ad ends, then gets pulled back into sync.
-- YouTube only. Twitch and others are not supported.
+- Up to 16 videos per session. Each one costs CPU and bandwidth; older laptops struggle beyond 6 to 8.
 
 ## Tests
 
-1. `npm test`: 21 unit tests for link parsing, layout and sync maths. Needs only Node 18+.
-2. `npm run test:browser`: 7 end-to-end checks in headless Chrome against an offline stand-in for the YouTube player (`tests/mock-youtube.js`). Needs Playwright (`npm i -D playwright`).
+1. `npm test`: 26 unit tests for link parsing, layout and sync maths. Needs only Node 18+.
+2. `npm run test:browser`: 12 end-to-end checks in headless Chrome. Needs Playwright (`npm i -D playwright`).
 
-The stand-in can be slow, blocked, live, or ignore the first play request, so start-up, drift repair, error tiles and live handling are all exercised without the network.
+The browser checks use offline stand-ins for the YouTube, Twitch and Vimeo players (`tests/mock-players.js`) plus a real audio file for the direct-file player. They cover start-up, drift repair, mixed sources, add/remove, live and chat, both themes, and six screen sizes from 320×568 to 2560×1080.
 
 ## Files
 
 ```
-index.html        build a session (paste links, set start times)
+index.html        build a session (paste links, set start times, saved sets)
 watch.html        the synced viewer
-js/parse.js       links and times      (pure, tested)
-js/layout.js      tile rectangles      (pure, tested)
-js/sync.js        drift maths          (pure, tested)
-js/watch.js       players, controls, sync loop
+css/style.css     both themes, all screen sizes
+js/parse.js       links and times                 (pure, tested)
+js/layout.js      tile rectangles                 (pure, tested)
+js/sync.js        drift maths                     (pure, tested)
+js/sources.js     one adapter per video site
+js/watch.js       tiles, controls, sync loop
 js/builder.js     the build page
+js/theme.js       day / night
+js/icons.js       inline icons
 js/store.js       localStorage helpers
 ```
 
 ## Link format
 
-`watch.html?v=ID&t=SECONDS&v=ID&t=SECONDS[&audio=all]`: the same `v`/`t` pairs ViewSync uses, so old links can be converted by swapping the domain.
+`watch.html?v=<video>&t=<seconds>&v=<video>&t=<seconds>[&audio=all]`
 
-MIT licence. Not affiliated with YouTube or ViewSync.
+| Source | `v=` value |
+|---|---|
+| YouTube | the 11-character ID (same as ViewSync, so old links convert by swapping the domain) |
+| Twitch live | `tw:channelname` |
+| Twitch video | `tv:123456789` |
+| Vimeo | `vm:76979871` |
+| File | `file:` followed by the URL-encoded address |
+
+MIT licence. Not affiliated with YouTube, Twitch, Vimeo or ViewSync.

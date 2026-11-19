@@ -2,55 +2,146 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="color-scheme" content="light dark">
   <title>MultiSync</title>
+  <script>
+    // Set the theme before first paint so the page never flashes the wrong colours.
+    try {
+      var t = (JSON.parse(localStorage.getItem('multisync.settings') || '{}').theme) || 'auto';
+      document.documentElement.dataset.theme = t === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : t;
+    } catch (e) { document.documentElement.dataset.theme = 'dark'; }
+  </script>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body class="watch">
   <div id="banner" role="alert" hidden></div>
 
-  <div id="stage">
-    <div id="gate">
-      <button id="start" class="primary" disabled>Loading videos…</button>
-      <p id="gate-note">Browsers only allow sound after one click, so a single click here starts every video together.</p>
+  <main id="main">
+    <div id="stage-wrap">
+      <div id="stage"></div>
+      <div id="shield" aria-hidden="true"></div>
+      <div id="gate">
+        <div class="gate-card">
+          <h1 id="gate-title">Loading videos…</h1>
+          <p id="gate-note">Browsers only allow sound after a click, so one click here starts every video together.</p>
+          <button id="start" class="btn primary big" data-icon="play" disabled>Start</button>
+        </div>
+      </div>
     </div>
-  </div>
 
-  <div id="controls">
-    <div id="timeline-row">
+    <aside id="chat" aria-label="Live chat" hidden>
+      <header>
+        <strong>Live chat</strong>
+        <div id="chat-tabs" class="seg" role="tablist"></div>
+        <button id="chat-close" class="icon-btn" data-icon="close" aria-label="Close chat" title="Close chat"></button>
+      </header>
+      <iframe id="chat-frame" title="Live chat" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+    </aside>
+  </main>
+
+  <footer id="dock">
+    <div class="timeline">
       <span id="now">0:00</span>
       <input type="range" id="timeline" min="0" max="0" step="0.1" value="0" aria-label="Position in all videos" disabled>
       <span id="total">0:00</span>
     </div>
-    <div id="buttons">
-      <button id="play" disabled>Play</button>
-      <button id="back" title="Back 10 seconds (←)" disabled>−10s</button>
-      <button id="fwd" title="Forward 10 seconds (→)" disabled>+10s</button>
-      <button id="resync" title="Line every video up again now (S)" disabled>Re-sync</button>
-      <button id="golive" title="Jump every live stream to the live edge" hidden>Go live</button>
-      <label class="wide-only"><input type="checkbox" id="autosync" checked> Auto-sync</label>
-      <span id="status" aria-live="polite"></span>
-      <span class="gap"></span>
-      <label>Sound
-        <select id="audio" aria-label="Sound mode">
-          <option value="solo">One video</option>
-          <option value="all">All videos</option>
-        </select>
-      </label>
-      <button id="mute" title="Mute everything (M)">Mute</button>
-      <input type="range" id="volume" min="0" max="100" value="100" aria-label="Volume">
-      <label class="wide-only">Speed
-        <select id="speed" aria-label="Playback speed">
-          <option>0.5</option><option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option><option>2</option>
-        </select>
-      </label>
-      <button id="grid" title="Show all videos the same size (G)" hidden>Grid</button>
-      <button id="share">Copy link</button>
-      <a id="edit" class="btn" href="index.html">Edit</a>
-      <button id="full" class="wide-only" title="Full screen (F)">Full screen</button>
+    <div class="bar">
+      <button id="play" class="icon-btn primary" data-icon="play" aria-label="Play" title="Play / pause (Space)" disabled></button>
+      <button id="back" class="text-btn" aria-label="Back 10 seconds" title="Back 10 seconds (←)" disabled>−10</button>
+      <button id="fwd" class="text-btn" aria-label="Forward 10 seconds" title="Forward 10 seconds (→)" disabled>+10</button>
+      <button id="resync" class="icon-btn hide-xs" data-icon="sync" aria-label="Re-sync now" title="Line every video up again now (S)" disabled></button>
+      <button id="golive" class="chip live" title="Jump every live stream to the live edge" hidden>Go live</button>
+      <span id="status" class="status" aria-live="polite"></span>
+
+      <span class="grow"></span>
+
+      <button id="mute" class="icon-btn" data-icon="volume" aria-label="Mute all" title="Mute everything (M)"></button>
+      <input type="range" id="volume" class="hide-sm" min="0" max="100" value="100" aria-label="Volume">
+      <button id="add" class="icon-btn" data-icon="plus" aria-label="Add a video" title="Add a video (A)"></button>
+      <button id="chat-btn" class="icon-btn" data-icon="chat" aria-label="Live chat" title="Live chat (C)" hidden></button>
+      <button id="grid" class="icon-btn" data-icon="grid" aria-label="Back to grid" title="Show all videos the same size (G)" hidden></button>
+      <button id="full" class="icon-btn hide-xs" data-icon="full" aria-label="Full screen" title="Full screen (F)"></button>
+      <button id="more" class="icon-btn" data-icon="more" aria-label="More options" title="More options" aria-haspopup="true" aria-expanded="false"></button>
     </div>
+  </footer>
+
+  <!-- Add a video -->
+  <div id="adder" class="pop" role="dialog" aria-label="Add a video" hidden>
+    <label for="add-input">Paste a link</label>
+    <div class="row">
+      <input type="text" id="add-input" placeholder="YouTube, Twitch, Vimeo or a video file link" autocomplete="off">
+      <button id="add-go" class="btn primary">Add</button>
+    </div>
+    <p id="add-error" class="error" role="alert"></p>
   </div>
+
+  <!-- More options -->
+  <div id="menu" class="pop" role="dialog" aria-label="More options" hidden>
+    <div class="field">
+      <span>Sound from</span>
+      <div class="seg" id="audio">
+        <button data-value="solo">One video</button>
+        <button data-value="all">All videos</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="speed">Speed</label>
+      <select id="speed">
+        <option>0.5</option><option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option><option>2</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="autosync">Keep videos in sync automatically</label>
+      <input type="checkbox" id="autosync" class="switch" checked>
+    </div>
+    <div class="field">
+      <label for="threshold">Correct when off by more than</label>
+      <select id="threshold">
+        <option value="0.3">0.3s</option><option value="0.5">0.5s</option><option value="1">1s</option><option value="2">2s</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="autohide">Hide controls while playing</label>
+      <input type="checkbox" id="autohide" class="switch">
+    </div>
+    <div class="field">
+      <span>Theme</span>
+      <div class="seg" id="theme">
+        <button data-value="auto">Auto</button>
+        <button data-value="light">Day</button>
+        <button data-value="dark">Night</button>
+      </div>
+    </div>
+    <hr>
+    <button id="lock" class="menu-item" data-icon="lock">Save current positions as the sync point</button>
+    <button id="menu-resync" class="menu-item" data-icon="sync">Re-sync now</button>
+    <button id="share" class="menu-item" data-icon="link">Copy link to this session</button>
+    <a id="edit" class="menu-item" data-icon="edit" href="index.html">Edit the video list</a>
+    <button id="help-btn" class="menu-item" data-icon="keyboard">Keyboard shortcuts</button>
+    <button id="menu-full" class="menu-item" data-icon="full">Full screen</button>
+  </div>
+
+  <dialog id="help">
+    <h2>Keyboard shortcuts</h2>
+    <dl class="keys">
+      <dt><kbd>Space</kbd></dt><dd>Play / pause all</dd>
+      <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Back / forward 10 seconds</dd>
+      <dt><kbd>,</kbd> <kbd>.</kbd></dt><dd>Back / forward 1 second</dd>
+      <dt><kbd>1</kbd>–<kbd>9</kbd></dt><dd>Hear that video</dd>
+      <dt><kbd>M</kbd></dt><dd>Mute all</dd>
+      <dt><kbd>S</kbd></dt><dd>Re-sync now</dd>
+      <dt><kbd>G</kbd></dt><dd>Back to grid</dd>
+      <dt><kbd>A</kbd></dt><dd>Add a video</dd>
+      <dt><kbd>C</kbd></dt><dd>Live chat</dd>
+      <dt><kbd>H</kbd></dt><dd>Hide / show controls</dd>
+      <dt><kbd>F</kbd></dt><dd>Full screen</dd>
+      <dt><kbd>?</kbd></dt><dd>This list</dd>
+    </dl>
+    <p class="note">Shortcuts work when the page has focus. After clicking inside a video, click the control bar once.</p>
+    <form method="dialog"><button class="btn primary">Close</button></form>
+  </dialog>
 
   <div id="toast" role="status" hidden></div>
   <script type="module" src="js/watch.js"></script>

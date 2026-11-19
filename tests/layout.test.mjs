@@ -64,3 +64,16 @@ test('computeRects: three videos leave no empty quarter', () => {
   const r = computeRects(3, 1600, 900, null, 0);
   assert.equal(r[2].x + r[2].w / 2, 800); // third tile is centred
 });
+
+import { stackRects, shouldStack } from '../js/layout.js';
+
+test('phones with many videos get a scrolling full-width column', () => {
+  assert.equal(shouldStack(2, 390, 640), false);
+  assert.equal(shouldStack(4, 390, 640), true);
+  assert.equal(shouldStack(6, 390, 640), true);
+  assert.equal(shouldStack(6, 1280, 640), false);
+  assert.equal(shouldStack(3, 600, 1000), false); // tall tablet: three full-width tiles already fit
+  const r = stackRects(4, 390);
+  assert.equal(r[0].w, 390);
+  assert.equal(r[1].y, r[0].h + 6);
+});
