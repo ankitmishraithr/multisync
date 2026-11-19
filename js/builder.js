@@ -3,6 +3,7 @@ import { loadRecent, clearRecent, loadSaved, saveNamed, removeSaved } from './st
 import { hydrateIcons, setIcon, icon } from './icons.js';
 import { cycleTheme, onTheme } from './theme.js';
 import { computeRects } from './layout.js';
+import { mountSearch } from './searchbox.js';
 
 const $ = (id) => document.getElementById(id);
 const MAX_VIDEOS = 16;
@@ -11,6 +12,7 @@ const MAX_VIDEOS = 16;
 const incoming = parseWatch(location.search);
 let videos = incoming.videos.slice(0, MAX_VIDEOS);
 let audio = incoming.audio;
+let searchBox = null; // set once the search box is mounted; render() keeps its "Added" marks current
 
 function el(tag, props = {}, children = []) {
   const node = Object.assign(document.createElement(tag), props);
@@ -139,33 +141,33 @@ function render() {
   $('copy').disabled = !ready;
   $('audio').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === audio));
   renderWall();
+  searchBox?.refresh();
 }
 
-function addFromPaste() {
-  const text = $('paste').value;
-  const found = parseInput(text);
+function addVideos(found) {
   const error = $('paste-error');
   error.textContent = '';
-  if (!text.trim()) return;
-  if (!found.length) {
-    error.textContent = 'No video found in that text. Supported: YouTube, Twitch, Vimeo, and direct video file links (.mp4, .webm).';
-    return;
-  }
   const room = Math.max(0, MAX_VIDEOS - videos.length);
-  if (found.length > room) error.textContent = `One session holds up to ${MAX_VIDEOS} videos. Added the first ${room}.`;
+  if (found.length > room) error.textContent = `One session holds up to ${MAX_VIDEOS} videos. ${room ? `Added the first ${room}.` : 'Remove one first.'}`;
   videos.push(...found.slice(0, room));
-  $('paste').value = '';
   render();
+  return room > 0;
 }
 
-$('add').addEventListener('click', addFromPaste);
-$('paste').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    addFromPaste();
-  }
-});
-$('paste').addEventListener('paste', () => setTimeout(addFromPaste, 0));
+searchBox = mountSearch(
+  { input: $('paste'), button: $('add'), suggestBox: $('suggest'), panel: $('results'), error: $('paste-error') },
+  {
+    onLinks: (found) => { addVideos(found); $('paste').value = ''; },
+    onAdd: (video) => addVideos([video]),
+    onRemove: (video) => {
+      const i = videos.findIndex((v) => videoKey(v) === videoKey(video));
+      if (i >= 0) videos.splice(i, 1);
+      render();
+    },
+    isAdded: (video) => videos.some((v) => videoKey(v) === videoKey(video)),
+  },
+);
+
 $('clear').addEventListener('click', () => { videos = []; render(); });
 $('audio').addEventListener('click', (e) => {
   const value = e.target.closest('button')?.dataset.value;

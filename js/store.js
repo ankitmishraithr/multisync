@@ -48,3 +48,17 @@ export function saveNamed(name, query) {
   write(SAVED_KEY, items.slice(0, 30));
 }
 export const removeSaved = (name) => write(SAVED_KEY, loadSaved().filter((item) => item.name !== name));
+
+// ---------- YouTube search: the user's own API key and recent searches ----------
+const KEY_KEY = 'multisync.youtubeKey';
+const SEARCHES_KEY = 'multisync.searches';
+
+export const loadApiKey = () => String(read(KEY_KEY, '') || '');
+export const saveApiKey = (key) => write(KEY_KEY, String(key || '').trim());
+export const loadSearches = () => list(SEARCHES_KEY).filter((s) => typeof s === 'string');
+export function rememberSearch(query) {
+  const q = query.trim();
+  if (!q) return;
+  write(SEARCHES_KEY, [q, ...loadSearches().filter((s) => s.toLowerCase() !== q.toLowerCase())].slice(0, 6));
+}
+export const clearSearches = () => write(SEARCHES_KEY, []);

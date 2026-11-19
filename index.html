@@ -24,21 +24,25 @@
   <main class="build">
     <div class="col">
       <h1>Several videos, one screen, kept in sync.</h1>
-      <p class="lead">Paste the links. Each one gets a place on your screen, and they all play together.</p>
+      <p class="lead">Search for videos or paste their links. Each one gets a place on your screen, and they all play together.</p>
 
-      <div class="paste">
-        <textarea id="paste" rows="1" placeholder="Paste one or more links" aria-label="Video links"></textarea>
-        <button id="add" class="btn primary" data-icon="plus">Add</button>
+      <div class="finder">
+        <div class="paste">
+          <textarea id="paste" rows="1" placeholder="Search YouTube, or paste links" aria-label="Search YouTube or paste video links"></textarea>
+          <button id="add" class="btn primary"><span class="lbl">Search</span></button>
+        </div>
+        <ul id="suggest" class="suggest" role="listbox" aria-label="Suggestions" hidden></ul>
       </div>
-      <p class="accepts">YouTube and YouTube Live, Twitch, Vimeo, and direct .mp4 or .webm links.</p>
+      <p class="accepts">Links can be YouTube, Twitch, Vimeo, or direct .mp4 / .webm files. Paste several at once.</p>
       <p class="error" id="paste-error" role="alert"></p>
+      <section id="results" class="results" aria-label="Search results" hidden></section>
 
       <div class="list-head">
         <h2 id="list-title">Your videos</h2>
         <button id="clear" class="btn quiet" hidden>Remove all</button>
       </div>
       <ul class="videos" id="videos"></ul>
-      <p class="empty" id="empty">Nothing here yet. Paste a link above.</p>
+      <p class="empty" id="empty">Nothing here yet. Search or paste a link above.</p>
 
       <section id="saved-section" hidden>
         <div class="list-head"><h2>Saved sets</h2></div>

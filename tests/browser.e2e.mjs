@@ -50,7 +50,7 @@ const problems = [];
 
 async function open(path, { mock = true, viewport = { width: 1280, height: 720 }, context, theme } = {}) {
   const ctx = context || (await browser.newContext({ viewport, colorScheme: theme || 'dark' }));
-  await ctx.route(/ytimg\.com|youtube\.com|twitch\.tv|vimeo\.com/, (route) => route.abort());
+  await ctx.route(/ytimg\.com|youtube\.com|twitch\.tv|vimeo\.com|googleapis\.com|suggestqueries/, (route) => route.abort());
   const page = await ctx.newPage();
   page.on('pageerror', (e) => problems.push(`${path}: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/ERR_FAILED|Failed to load resource/.test(m.text()) && problems.push(`${path}: ${m.text()}`));
@@ -87,9 +87,9 @@ await check('builder: mixed sources, start times, link, errors, save, theme', as
   await page.locator('#start-2').blur();
   const link = await page.getAttribute('#go', 'href');
   assert.ok(link.includes(`watch.html?v=${A}&t=65&v=${B}&t=20&v=${C}&t=90&v=tw:somechannel&t=0&v=vm:76979871&t=0&v=file:https%3A%2F%2Fcdn.example.com`), link);
-  await page.fill('#paste', 'not a link');
-  await page.click('#add');
-  assert.match(await page.textContent('#paste-error'), /No video found/);
+  await page.fill('#paste', 'https://example.com/not-a-video');
+  assert.equal((await page.textContent('#add')).trim(), 'Search', 'anything that is not a video link is treated as a search');
+  await page.fill('#paste', '');
   await page.locator('#videos li').nth(0).getByLabel('Remove video 1').click();
   assert.equal(await page.locator('#videos li').count(), 5);
   assert.equal(await page.textContent('#list-title'), 'Your videos (5)');
@@ -261,11 +261,10 @@ await check('watch: add and remove videos without restarting the others', async 
   await begin(page);
   await inSync(page);
   await page.click('#add');
-  await page.fill('#add-input', 'nonsense');
-  await page.click('#add-go');
-  assert.match(await page.textContent('#add-error'), /No video found/);
   await page.fill('#add-input', `https://youtu.be/${C}?t=40`);
+  assert.equal((await page.textContent('#add-go')).trim(), 'Add');
   await page.keyboard.press('Enter');
+  assert.ok(await page.locator('#adder').isHidden(), 'closes after adding a pasted link');
   assert.equal(await page.locator('.tile').count(), 3);
   await page.waitForFunction(() => window.__players.CCCCCCCCCCC && window.__players.CCCCCCCCCCC.state === 1);
   await inSync(page);
@@ -293,6 +292,128 @@ await check('watch: add and remove videos without restarting the others', async 
   await begin(empty);
   await empty.waitForFunction(() => window.__players.AAAAAAAAAAA.state === 1);
   await empty.context().close();
+});
+
+// ---------- YouTube search (official API mocked; suggestions mocked) ----------
+const KEY = 'AIzaSyTESTKEY_0123456789abcdefghijk';
+const hit = (id, title, live = 'none') => ({ id: { videoId: id }, snippet: { title, channelTitle: `Channel of ${id[0]}`, liveBroadcastContent: live, thumbnails: { medium: { url: `https://i.ytimg.com/vi/${id}/mqdefault.jpg` } } } });
+async function mockSearch(page, log, { fail } = {}) {
+  await page.route(/suggestqueries\.google\.com/, (route) => {
+    const u = new URL(route.request().url());
+    const q = u.searchParams.get('q');
+    route.fulfill({ contentType: 'text/javascript', body: `${u.searchParams.get('jsonp')}(${JSON.stringify([q, [[`${q} live`, 0], [`${q} today`, 0]], {}])})` });
+  });
+  await page.route(/googleapis\.com\/youtube\/v3\/search/, (route) => {
+    const u = new URL(route.request().url());
+    log.push(u.searchParams);
+    if (fail) return route.fulfill({ status: 403, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: { message: 'quota', errors: [{ reason: fail }] } }) });
+    if (u.searchParams.get('key') !== KEY) return route.fulfill({ status: 400, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: { message: 'API key not valid. Please pass a valid API key.', errors: [{ reason: 'badRequest' }] } }) });
+    const live = u.searchParams.get('eventType') === 'live';
+    const page2 = u.searchParams.get('pageToken') === 'P2';
+    const items = page2 ? [hit('GGGGGGGGGGG', 'Seventh')] : live ? [hit('LIVEDDDDDDD', 'Live one', 'live')] : [hit('DDDDDDDDDDD', 'First &amp; best'), hit('EEEEEEEEEEE', 'Second'), hit('LIVEDDDDDDD', 'Live one', 'live')];
+    route.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ items, nextPageToken: page2 || live ? undefined : 'P2' }) });
+  });
+  await page.route(/googleapis\.com\/youtube\/v3\/videos/, (route) => route.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ items: [{ id: 'DDDDDDDDDDD', contentDetails: { duration: 'PT1H2M3S' } }, { id: 'EEEEEEEEEEE', contentDetails: { duration: 'PT4M13S' } }] }) }));
+}
+
+await check('search: suggestions, one-time key setup, add several from one search, filters, paging', async () => {
+  const page = await open('/index.html');
+  const log = [];
+  await mockSearch(page, log);
+  await page.click('#paste');
+  await page.keyboard.type('nifty');
+  await page.waitForSelector('#suggest [role=option]');
+  assert.deepEqual(await page.locator('#suggest [role=option]').allTextContents(), ['nifty live', 'nifty today']);
+  assert.equal((await page.textContent('#add')).trim(), 'Search');
+  await page.keyboard.press('ArrowDown'); // keyboard picks a suggestion
+  await page.keyboard.press('Enter');
+  assert.equal(await page.inputValue('#paste'), 'nifty live');
+  // first search ever: explains the free key instead of failing
+  assert.match(await page.textContent('#results'), /free YouTube key/);
+  assert.equal(log.length, 0, 'nothing is sent without a key');
+  await page.fill('#results input', 'short');
+  await page.click('#results >> text=Save key');
+  assert.match(await page.textContent('#results .error'), /does not look like a key/);
+  await page.fill('#results input', 'AIzaSyWRONGKEY_0123456789abcdefghij');
+  await page.click('#results >> text=Save key');
+  await page.waitForFunction(() => /did not accept that key/.test(document.getElementById('results').textContent));
+  await page.fill('#results input', KEY);
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('#results .result');
+  assert.equal(await page.locator('#results .result').count(), 3);
+  assert.equal(log.at(-1).get('q'), 'nifty live');
+  assert.equal(log.at(-1).get('videoEmbeddable'), 'true');
+  assert.deepEqual(await page.locator('#results .result strong').allTextContents(), ['First & best', 'Second', 'Live one']);
+  assert.deepEqual(await page.locator('#results .len').allTextContents(), ['1:02:03', '4:13']);
+  assert.equal(await page.locator('#results .result .badge').count(), 1);
+  // add two from the same search without leaving it
+  await page.locator('#results .result').nth(0).click();
+  await page.locator('#results .result').nth(2).click();
+  assert.equal(await page.locator('#videos li').count(), 2);
+  assert.equal(await page.locator('#wall .slot').count(), 2);
+  assert.deepEqual(await page.locator('#results .result').evaluateAll((els) => els.map((e) => e.getAttribute('aria-pressed'))), ['true', 'false', 'true']);
+  assert.match(await page.getAttribute('#go', 'href'), /v=DDDDDDDDDDD&t=0&v=LIVEDDDDDDD&t=0$/);
+  await page.locator('#results .result').nth(0).click(); // click again takes it back out
+  assert.equal(await page.locator('#videos li').count(), 1);
+  await page.getByLabel('Remove video 1').click(); // removing from the list un-marks the result
+  assert.deepEqual(await page.locator('#results .result').evaluateAll((els) => els.map((e) => e.getAttribute('aria-pressed'))), ['false', 'false', 'false']);
+  // more results, then the live filter
+  const before = log.length;
+  await page.click('#results >> text=More results');
+  await page.waitForFunction(() => document.querySelectorAll('#results .result').length === 4);
+  assert.equal(log.at(-1).get('pageToken'), 'P2');
+  await page.click('#results >> text=Live now');
+  await page.waitForFunction(() => document.querySelectorAll('#results .result').length === 1);
+  assert.equal(log.at(-1).get('eventType'), 'live');
+  await page.click('#results >> text=All');
+  await page.waitForFunction(() => document.querySelectorAll('#results .result').length === 3);
+  assert.equal(log.length, before + 2, 'going back to "All" reuses the earlier answer and costs nothing');
+  // recent searches are offered when the box is empty
+  await page.fill('#paste', '');
+  await page.click('#paste');
+  await page.waitForSelector('#suggest [role=option]');
+  assert.deepEqual(await page.locator('#suggest [role=option]').allTextContents(), ['nifty live']);
+  // pasting links still works exactly as before
+  await page.fill('#paste', `https://youtu.be/${A} twitch.tv/chan`);
+  assert.equal((await page.textContent('#add')).trim(), 'Add');
+  await page.click('#add');
+  assert.equal(await page.locator('#videos li').count(), 2);
+  assert.equal(await page.inputValue('#paste'), '');
+  await page.context().close();
+
+  const limited = await open('/index.html');
+  await limited.addInitScript((k) => localStorage.setItem('multisync.youtubeKey', JSON.stringify(k)), KEY);
+  await limited.reload();
+  await mockSearch(limited, [], { fail: 'quotaExceeded' });
+  await limited.fill('#paste', 'anything');
+  await limited.click('#add');
+  await limited.waitForFunction(() => /used up/.test(document.getElementById('paste-error').textContent));
+  await limited.context().close();
+});
+
+await check('search inside the viewer: pick several results while the videos keep playing', async () => {
+  const page = await open(`/watch.html?v=${A}&t=10`, { viewport: { width: 1280, height: 720 } });
+  await page.evaluate((k) => localStorage.setItem('multisync.youtubeKey', JSON.stringify(k)), KEY);
+  const log = [];
+  await mockSearch(page, log);
+  await begin(page);
+  await page.click('#add');
+  await page.fill('#add-input', 'market open');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('#add-results .result');
+  await page.locator('#add-results .result').nth(0).click();
+  await page.locator('#add-results .result').nth(1).click();
+  assert.equal(await page.locator('.tile').count(), 3);
+  assert.ok(await page.locator('#adder').isVisible(), 'stays open for more picks');
+  assert.match(page.url(), /v=DDDDDDDDDDD&t=0&v=EEEEEEEEEEE&t=0/);
+  await page.waitForFunction(() => window.__players.DDDDDDDDDDD?.state === 1 && window.__players.EEEEEEEEEEE?.state === 1);
+  await page.locator('#add-results .result').nth(1).click(); // un-pick removes the tile
+  assert.equal(await page.locator('.tile').count(), 2);
+  assert.equal((await players(page))[A].state, 1, 'the original video never stopped');
+  const pop = await page.locator('#adder').boundingBox();
+  assert.ok(pop.x >= 0 && pop.y >= 0 && pop.x + pop.width <= 1281, 'panel on screen');
+  await page.keyboard.press('Escape');
+  await page.context().close();
 });
 
 await check('watch: "save current positions" turns a manual line-up into the sync point', async () => {

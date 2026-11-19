@@ -22,6 +22,7 @@ Do not open `index.html` by double-clicking it. Video sites refuse to play on `f
 
 ## Features
 
+0. **Search YouTube from the page.** Suggestions appear as you type. Results stay open, so you can add several videos from one search, with a "Live now" filter. Needs a free key (see below).
 1. **One-click start.** Every video buffers muted, then all are released together.
 2. **Automatic sync.** Checked every half second; a drifted video is pulled back. Tolerance is adjustable (0.3s to 2s).
 3. **Fine-tune while watching.** Shift any video in 0.1s steps (Shift-click for 1s). The link updates as you go.
@@ -53,13 +54,31 @@ Found by testing the live site on 19 Nov 2026.
 | 11 | YouTube only. | YouTube, Twitch, Vimeo, direct files. |
 | 12 | Loads a visitor counter and jQuery 1.8 (2012). | No trackers, no libraries. |
 
+## YouTube search: the free key
+
+YouTube only allows search through its official API, which needs a key tied to a Google account.
+
+1. Open the YouTube Data API v3 page in Google Cloud: https://console.cloud.google.com/apis/library/youtube.googleapis.com
+2. Create a project if asked, then press **Enable**.
+3. Go to **Credentials**, press **Create credentials**, choose **API key**.
+4. Paste the key into the box MultiSync shows the first time you search.
+
+Things to know:
+
+- It is free. The default allowance is about 100 searches a day; "More results" counts as a search. Repeating a search in the same visit costs nothing.
+- The key is saved only in your browser (`localStorage`). It is never written into the code or the link you share.
+- Recommended: in Google Cloud, restrict the key to "YouTube Data API v3" and to your site's address (for example `http://localhost:8080/*`).
+- Suggestions while typing need no key. They come from the same public endpoint youtube.com's search box uses; it is not a documented API, so if it ever stops answering you simply get no suggestions.
+- Pasting links needs no key and has no limit.
+
 ## Privacy
 
 1. Nothing you paste leaves your browser, except to the video site that plays it.
 2. YouTube plays through its privacy-enhanced player (`youtube-nocookie.com`); Vimeo is asked not to track (`dnt`).
 3. Each video site's script is loaded only if you use a video from that site.
 4. The build page asks YouTube or Vimeo for a video's title when you add its link. No other party is contacted.
-5. The video sites still see that you watched, as with any embedded player.
+5. What you type in the search box goes to Google (for suggestions and search), the same as typing it on youtube.com.
+6. The video sites still see that you watched, as with any embedded player.
 
 ## Limits you should know
 
@@ -73,8 +92,8 @@ Found by testing the live site on 19 Nov 2026.
 
 ## Tests
 
-1. `npm test`: 27 unit tests for link parsing, layout and sync maths. Needs only Node 18+.
-2. `npm run test:browser`: 12 end-to-end checks in headless Chrome. Needs Playwright (`npm i -D playwright`).
+1. `npm test`: 32 unit tests for link parsing, layout, sync maths and search results. Needs only Node 18+.
+2. `npm run test:browser`: 14 end-to-end checks in headless Chrome. Needs Playwright (`npm i -D playwright`).
 
 The browser checks use offline stand-ins for the YouTube, Twitch and Vimeo players (`tests/mock-players.js`) plus a real audio file for the direct-file player. They cover start-up, drift repair, mixed sources, add/remove, live and chat, both themes, and six screen sizes from 320×568 to 2560×1080.
 
@@ -92,6 +111,8 @@ js/watch.js       tiles, controls, sync loop
 js/builder.js     the build page
 js/theme.js       day / night
 js/icons.js       inline icons
+js/ytsearch.js    YouTube search and suggestions  (pure parts tested)
+js/searchbox.js   the search / paste box used on both pages
 js/store.js       localStorage helpers
 ```
 

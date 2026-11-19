@@ -1,10 +1,11 @@
-import { parseWatch, parseInput, buildQuery, formatTime, videoKey, sourceUrl, shortName, SOURCE_LABEL } from './parse.js';
+import { parseWatch, buildQuery, formatTime, videoKey, sourceUrl, shortName, SOURCE_LABEL } from './parse.js';
 import { computeRects, stackRects, shouldStack } from './layout.js';
 import { STATE, planCorrections, sharedDuration, targetTime, clamp } from './sync.js';
 import { loadSettings, saveSettings, rememberSession } from './store.js';
 import { createPlayer, chatUrl } from './sources.js';
 import { hydrateIcons, setIcon, icon } from './icons.js';
-import { setTheme, getTheme, onTheme, resolvedTheme } from './theme.js';
+import { setTheme, onTheme, resolvedTheme } from './theme.js';
+import { mountSearch } from './searchbox.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
@@ -184,6 +185,7 @@ function removeTile(t) {
   refreshChatButton();
   updateGate();
   syncUrl();
+  searchBox?.refresh();
   toast('Video removed');
 }
 
@@ -627,29 +629,36 @@ function togglePop(id) {
   poke();
 }
 
-function addFromInput() {
-  const input = $('add-input');
-  const found = parseInput(input.value);
+function addVideos(found) {
   const error = $('add-error');
   error.textContent = '';
-  if (!input.value.trim()) return;
-  if (!found.length) {
-    error.textContent = 'No video found in that link. Supported: YouTube, Twitch, Vimeo, and direct video files (.mp4, .webm).';
-    return;
-  }
   const room = MAX_VIDEOS - tiles.length;
   if (room <= 0) {
     error.textContent = `A session holds up to ${MAX_VIDEOS} videos. Remove one first.`;
-    return;
+    return false;
   }
   found.slice(0, room).forEach(addTile);
-  input.value = '';
-  $('adder').hidden = true;
   layout();
   applyAudio();
   updateGate();
   syncUrl();
   toast(found.length > 1 ? `${Math.min(found.length, room)} videos added` : 'Video added');
+  return true;
+}
+
+let searchBox = null;
+function mountAdder() {
+  const same = (video) => (t) => videoKey(t.video) === videoKey(video);
+  searchBox = mountSearch(
+    { input: $('add-input'), button: $('add-go'), suggestBox: $('add-suggest'), panel: $('add-results'), error: $('add-error') },
+    {
+      // Pasted links: add and close. Search results: stay open so several can be picked.
+      onLinks: (found) => { if (addVideos(found)) { $('add-input').value = ''; $('adder').hidden = true; } },
+      onAdd: (video) => addVideos([video]),
+      onRemove: (video) => { const t = tiles.find(same(video)); if (t) removeTile(t); },
+      isAdded: (video) => tiles.some(same(video)),
+    },
+  );
 }
 
 // ---------- auto-hide of the control bar ----------
@@ -774,8 +783,7 @@ function wire() {
   $('menu-full').addEventListener('click', () => { closePops(); toggleFullscreen(); });
   $('more').addEventListener('click', () => togglePop('menu'));
   $('add').addEventListener('click', () => togglePop('adder'));
-  $('add-go').addEventListener('click', addFromInput);
-  $('add-input').addEventListener('keydown', (e) => e.key === 'Enter' && addFromInput());
+  mountAdder();
   $('help-btn').addEventListener('click', () => { closePops(); $('help').showModal(); });
   $('chat-btn').addEventListener('click', () => (state.chat ? closeChat() : openChat()));
   $('chat-close').addEventListener('click', closeChat);

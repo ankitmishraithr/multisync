@@ -70,12 +70,16 @@
 
   <!-- Add a video -->
   <div id="adder" class="pop" role="dialog" aria-label="Add a video" hidden>
-    <label for="add-input">Paste a link</label>
-    <div class="row">
-      <input type="text" id="add-input" placeholder="YouTube, Twitch, Vimeo or a video file link" autocomplete="off">
-      <button id="add-go" class="btn primary">Add</button>
+    <label for="add-input">Search YouTube, or paste a link</label>
+    <div class="finder">
+      <div class="row">
+        <input type="text" id="add-input" placeholder="Search, or paste YouTube / Twitch / Vimeo links" autocomplete="off">
+        <button id="add-go" class="btn primary"><span class="lbl">Add</span></button>
+      </div>
+      <ul id="add-suggest" class="suggest" role="listbox" aria-label="Suggestions" hidden></ul>
     </div>
     <p id="add-error" class="error" role="alert"></p>
+    <div id="add-results" class="results" hidden></div>
   </div>
 
   <!-- More options -->
