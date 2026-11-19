@@ -5,6 +5,7 @@ A from-scratch rebuild of the idea behind [viewsync.net](https://viewsync.net/),
 
 - Sources: YouTube (videos and live), Twitch (live channels and recorded videos), Vimeo, and direct video file links (`.mp4`, `.webm`).
 - Day and night themes. "Auto" follows your device.
+- Every video sits in its own labelled frame, so the page's controls never cover the video. The video you are listening to is outlined in amber.
 - Works from a 320px phone to an ultrawide monitor.
 - No build step, no dependencies, no server code, no accounts, no analytics, no API keys.
 - Cost to run: zero. Any static host works (GitHub Pages, Netlify, S3 + CloudFront).
@@ -57,7 +58,8 @@ Found by testing the live site on 19 Nov 2026.
 1. Nothing you paste leaves your browser, except to the video site that plays it.
 2. YouTube plays through its privacy-enhanced player (`youtube-nocookie.com`); Vimeo is asked not to track (`dnt`).
 3. Each video site's script is loaded only if you use a video from that site.
-4. The video sites still see that you watched, as with any embedded player.
+4. The build page asks YouTube or Vimeo for a video's title when you add its link. No other party is contacted.
+5. The video sites still see that you watched, as with any embedded player.
 
 ## Limits you should know
 
@@ -71,7 +73,7 @@ Found by testing the live site on 19 Nov 2026.
 
 ## Tests
 
-1. `npm test`: 26 unit tests for link parsing, layout and sync maths. Needs only Node 18+.
+1. `npm test`: 27 unit tests for link parsing, layout and sync maths. Needs only Node 18+.
 2. `npm run test:browser`: 12 end-to-end checks in headless Chrome. Needs Playwright (`npm i -D playwright`).
 
 The browser checks use offline stand-ins for the YouTube, Twitch and Vimeo players (`tests/mock-players.js`) plus a real audio file for the direct-file player. They cover start-up, drift repair, mixed sources, add/remove, live and chat, both themes, and six screen sizes from 320×568 to 2560×1080.

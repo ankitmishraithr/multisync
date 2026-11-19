@@ -1,7 +1,8 @@
-import { parseInput, parseTime, formatTime, buildQuery, parseWatch, sourceUrl, shortName, SOURCE_LABEL } from './parse.js';
+import { parseInput, parseTime, formatTime, buildQuery, parseWatch, sourceUrl, shortName, videoKey, SOURCE_LABEL } from './parse.js';
 import { loadRecent, clearRecent, loadSaved, saveNamed, removeSaved } from './store.js';
 import { hydrateIcons, setIcon, icon } from './icons.js';
 import { cycleTheme, onTheme } from './theme.js';
+import { computeRects } from './layout.js';
 
 const $ = (id) => document.getElementById(id);
 const MAX_VIDEOS = 16;
@@ -30,13 +31,68 @@ function watchUrl() {
   return url.href;
 }
 
+// ---------- titles ----------
+// Asked from the video's own site (YouTube / Vimeo oEmbed), so no extra party learns anything.
+// If the lookup fails the list simply keeps showing the ID.
+const titles = new Map();
+const OEMBED = {
+  youtube: (v) => `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(sourceUrl(v))}`,
+  vimeo: (v) => `https://vimeo.com/api/oembed.json?url=${encodeURIComponent(sourceUrl(v))}`,
+};
+
+function lookupTitle(video) {
+  const key = videoKey(video);
+  if (titles.has(key) || !OEMBED[video.kind]) return;
+  titles.set(key, null); // asked; no answer yet
+  fetch(OEMBED[video.kind](video))
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (!data || !data.title) return;
+      titles.set(key, { title: String(data.title), author: String(data.author_name || ''), thumb: /^https:\/\//.test(data.thumbnail_url || '') ? data.thumbnail_url : '' });
+      // Don't redraw the list under someone who is typing a start time; wait until they leave the field.
+      const typing = document.activeElement?.closest?.('#videos input');
+      if (typing) typing.addEventListener('blur', () => setTimeout(render, 0), { once: true });
+      else render();
+    })
+    .catch(() => {});
+}
+
+function thumbUrl(video) {
+  if (video.kind === 'youtube') return `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`;
+  return titles.get(videoKey(video))?.thumb || '';
+}
+
 function thumb(video) {
-  if (video.kind === 'youtube') {
-    const img = el('img', { className: 'thumb', src: `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`, alt: '', loading: 'lazy' });
-    img.addEventListener('error', () => img.replaceWith(el('div', { className: 'thumb', textContent: 'YouTube' })));
+  const src = thumbUrl(video);
+  if (src) {
+    const img = el('img', { className: 'thumb', src, alt: '', loading: 'lazy' });
+    img.addEventListener('error', () => img.replaceWith(el('div', { className: 'thumb', textContent: SOURCE_LABEL[video.kind] })));
     return img;
   }
   return el('div', { className: 'thumb', textContent: SOURCE_LABEL[video.kind] });
+}
+
+/** The preview: where each video will sit on the screen, using the same layout maths as the viewer. */
+function renderWall() {
+  const wall = $('wall');
+  if (!videos.length) {
+    wall.replaceChildren(el('p', { className: 'wall-empty', textContent: 'Your screen. Each link you add takes a place here.' }));
+    return;
+  }
+  const pad = 8;
+  const rects = computeRects(videos.length, wall.clientWidth - pad * 2, wall.clientHeight - pad * 2, null, 4, 0);
+  // Reuse slots so they glide to their new places when the list changes.
+  const slots = [...wall.querySelectorAll('.slot')];
+  wall.querySelector('.wall-empty')?.remove();
+  videos.forEach((video, i) => {
+    const slot = slots[i] || wall.appendChild(el('div', { className: 'slot' }, [el('span', { className: 'num' }), el('em')]));
+    Object.assign(slot.style, { left: `${rects[i].x + pad}px`, top: `${rects[i].y + pad}px`, width: `${rects[i].w}px`, height: `${rects[i].h}px` });
+    const src = thumbUrl(video);
+    slot.style.backgroundImage = src ? `url("${src}")` : '';
+    slot.querySelector('span').textContent = i + 1;
+    slot.querySelector('em').textContent = src ? '' : SOURCE_LABEL[video.kind];
+  });
+  slots.slice(videos.length).forEach((slot) => slot.remove());
 }
 
 function render() {
@@ -54,16 +110,16 @@ function render() {
       [videos[i], videos[j]] = [videos[j], videos[i]];
       render();
     };
-    const meta = el('div', {}, [
-      el('a', { className: 'name', href: sourceUrl(video), target: '_blank', rel: 'noopener', textContent: shortName(video) }),
-      el('span', { className: 'kind', textContent: SOURCE_LABEL[video.kind] }),
-    ]);
-    if (!live) meta.append(el('label', { className: 'start', htmlFor: `start-${i}`, textContent: 'Start at' }, [time]));
+    lookupTitle(video);
+    const known = titles.get(videoKey(video));
+    const sub = el('div', { className: 'sub' }, [el('span', { className: 'kind', textContent: SOURCE_LABEL[video.kind] })]);
+    if (known?.author && known.author !== 'Vimeo') sub.append(el('span', { textContent: known.author }));
+    if (!live) sub.append(el('label', { className: 'start', htmlFor: `start-${i}`, textContent: 'starts at' }, [time]));
     list.append(
       el('li', {}, [
-        el('span', { className: 'n', textContent: i + 1 }),
+        el('span', { className: 'num', textContent: i + 1 }),
         thumb(video),
-        meta,
+        el('div', {}, [el('a', { className: 'name', href: sourceUrl(video), target: '_blank', rel: 'noopener', textContent: known?.title || shortName(video) }), sub]),
         el('div', { className: 'acts' }, [
           iconButton('up', `Move video ${i + 1} up`, move(-1), i === 0),
           iconButton('down', `Move video ${i + 1} down`, move(1), i === videos.length - 1),
@@ -75,14 +131,14 @@ function render() {
 
   const ready = videos.length > 0;
   $('empty').hidden = ready;
-  $('options').hidden = !ready;
+  $('save').hidden = !ready;
   $('clear').hidden = videos.length < 2;
   $('list-title').textContent = ready ? `Your videos (${videos.length})` : 'Your videos';
-  $('count').textContent = ready ? `${videos.length} video${videos.length === 1 ? '' : 's'} ready` : 'Add at least one video';
   $('go').href = ready ? watchUrl() : '#';
   $('go').setAttribute('aria-disabled', String(!ready));
   $('copy').disabled = !ready;
   $('audio').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.value === audio));
+  renderWall();
 }
 
 function addFromPaste() {
@@ -117,15 +173,20 @@ $('audio').addEventListener('click', (e) => {
 });
 $('go').addEventListener('click', (e) => { if (!videos.length) e.preventDefault(); });
 $('copy').addEventListener('click', async () => {
-  const label = $('copy').lastChild;
+  let message = 'Link copied';
   try {
     await navigator.clipboard.writeText(watchUrl());
-    label.textContent = 'Copied';
   } catch {
-    label.textContent = 'Copy failed';
+    message = 'Could not copy. Open the session and copy from the address bar.';
   }
-  setTimeout(() => (label.textContent = 'Copy link'), 1500);
+  const error = $('paste-error');
+  $('copy').title = message;
+  $('copy').classList.add('on');
+  $('copy').setAttribute('aria-label', message);
+  setTimeout(() => { $('copy').classList.remove('on'); $('copy').title = 'Copy link'; $('copy').setAttribute('aria-label', 'Copy link'); }, 1500);
+  if (message !== 'Link copied') error.textContent = message;
 });
+new ResizeObserver(renderWall).observe($('wall'));
 
 // ---------- saved sets and recent sessions (this browser only) ----------
 

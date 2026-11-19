@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bestGrid, focusLayout } from '../js/layout.js';
+import { bestGrid, computeRects } from '../js/layout.js';
 
 test('single video fills the box', () => {
   const g = bestGrid(1, 1600, 900, 0);
@@ -28,18 +28,16 @@ test('tiles always fit inside the box', () => {
   }
 });
 
-test('focus layout keeps the main tile bigger and inside the box', () => {
-  for (let n = 2; n <= 8; n++) {
-    for (const [w, h] of [[1920, 1000], [390, 700]]) {
-      const f = focusLayout(n, w, h);
-      assert.ok(f.mainW > f.smallW, `main bigger n=${n}`);
-      if (f.side === 'right') assert.ok(f.mainW + f.smallW + 6 <= w + 1);
-      if (f.side === 'bottom') assert.ok(f.mainH + f.smallH + 6 <= h + 1);
+test('focus layout: the chosen video is clearly the biggest, on every screen shape', () => {
+  for (let n = 2; n <= 12; n++) {
+    for (const [w, h] of [[1920, 1000], [390, 700], [1280, 640], [780, 300], [2560, 1000]]) {
+      const r = computeRects(n, w, h, 1, 6, 30);
+      r.forEach((x, i) => i !== 1 && assert.ok(r[1].w >= x.w * 1.5, `n=${n} ${w}x${h} main ${r[1].w} vs ${x.w}`));
+      assert.ok(Math.min(...r.map((x) => x.w)) >= 60, `n=${n} ${w}x${h} thumbnails stay usable`);
     }
   }
 });
 
-import { computeRects } from '../js/layout.js';
 
 const overlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
@@ -61,7 +59,7 @@ test('computeRects: no overlaps, everything on screen, grid and focus', () => {
 
 test('computeRects: three videos leave no empty quarter', () => {
   // the original site puts 3 videos in a 2x2 grid with a dead corner, left-aligned
-  const r = computeRects(3, 1600, 900, null, 0);
+  const r = computeRects(3, 1600, 900, null, 0, 0);
   assert.equal(r[2].x + r[2].w / 2, 800); // third tile is centred
 });
 
@@ -76,4 +74,20 @@ test('phones with many videos get a scrolling full-width column', () => {
   const r = stackRects(4, 390);
   assert.equal(r[0].w, 390);
   assert.equal(r[1].y, r[0].h + 6);
+});
+
+test('with a label strip, the video part of every tile is still 16:9 and everything fits', () => {
+  const head = 30;
+  for (let n = 1; n <= 12; n++) {
+    for (const [w, h] of [[1920, 1000], [390, 700], [1280, 640], [780, 300]]) {
+      for (const focus of [null, 0]) {
+        const rects = computeRects(n, w, h, focus, 6, head);
+        rects.forEach((r, i) => {
+          if (r.w >= 60) assert.ok(Math.abs(r.w / (r.h - head) - 16 / 9) < 0.06, `ratio n=${n} ${w}x${h} f=${focus} ${JSON.stringify(r)}`);
+          assert.ok(r.x >= -1 && r.y >= -1 && r.x + r.w <= w + 1 && r.y + r.h <= h + 1, `inside n=${n} ${w}x${h} f=${focus} i=${i} ${JSON.stringify(r)}`);
+          for (let j = i + 1; j < n; j++) assert.ok(!overlap(r, rects[j]), `overlap n=${n} f=${focus}`);
+        });
+      }
+    }
+  }
 });

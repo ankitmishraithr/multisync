@@ -70,7 +70,7 @@ const begin = async (page) => {
 };
 const inSync = (page) => page.waitForFunction(() => document.getElementById('status').textContent === 'In sync');
 const tool = (page, n, title) => page.locator('.tile').nth(n).locator(`.tool[title^="${title}"]`);
-const boxes = (page) => page.locator('.tile').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
+const boxes = (page) => page.locator('.tile-body').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }));
 const A = 'AAAAAAAAAAA', B = 'BBBBBBBBBBB', C = 'CCCCCCCCCCC';
 
 await check('builder: mixed sources, start times, link, errors, save, theme', async () => {
@@ -92,7 +92,17 @@ await check('builder: mixed sources, start times, link, errors, save, theme', as
   assert.match(await page.textContent('#paste-error'), /No video found/);
   await page.locator('#videos li').nth(0).getByLabel('Remove video 1').click();
   assert.equal(await page.locator('#videos li').count(), 5);
-  assert.equal(await page.textContent('#count'), '5 videos ready');
+  assert.equal(await page.textContent('#list-title'), 'Your videos (5)');
+  assert.equal(await page.locator('#wall .slot').count(), 5, 'preview shows a place for each video');
+  // titles come from the video site's own lookup when it answers
+  const titled = await open(`/index.html?v=${A}&t=5`, { theme: 'light' });
+  assert.equal(await titled.locator('#videos .name').textContent(), A, 'falls back to the ID when the lookup is blocked');
+  await titled.route(/youtube\.com\/oembed/, (r) => r.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ title: 'Morning <b>market</b> stream', author_name: 'Some Channel' }) }));
+  await titled.reload();
+  await titled.waitForFunction(() => document.querySelector('#videos .name').textContent.startsWith('Morning'));
+  assert.equal(await titled.locator('#videos .name').textContent(), 'Morning <b>market</b> stream', 'shown as plain text');
+  assert.equal(await titled.inputValue('#start-0'), '0:05', 'start time survives the re-draw');
+  await titled.context().close();
   // save a named set
   await page.click('#save');
   await page.fill('#save-name', 'Morning streams');
@@ -350,6 +360,8 @@ await check('layout: phone, tablet, laptop, ultrawide and sideways phone, grid a
   assert.equal(await b.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'builder: no sideways scroll at 320px');
   const go = await b.locator('#go').boundingBox();
   assert.ok(go.y + go.height <= 568 && go.x + go.width <= 321, 'Watch button stays on screen');
+  const slots = await b.locator('#wall .slot').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
+  assert.ok(slots.length === 3 && slots.every((w) => w > 40), 'preview wall is drawn');
   await b.screenshot({ path: '/tmp/builder-320.png' });
   await b.context().close();
 });

@@ -21,78 +21,73 @@
     <button id="theme" class="icon-btn" data-icon="auto" aria-label="Theme" title="Theme"></button>
   </header>
 
-  <main class="page">
-    <section class="hero">
-      <h1>Watch several videos side by side, in sync.</h1>
-      <p>Paste the links, press Watch. Works for recordings and live streams.</p>
-      <ul class="sources" aria-label="Supported sources">
-        <li>YouTube</li><li>YouTube Live</li><li>Twitch</li><li>Vimeo</li><li>MP4 / WebM links</li>
-      </ul>
-    </section>
+  <main class="build">
+    <div class="col">
+      <h1>Several videos, one screen, kept in sync.</h1>
+      <p class="lead">Paste the links. Each one gets a place on your screen, and they all play together.</p>
 
-    <div class="paste">
-      <textarea id="paste" rows="1" placeholder="Paste one or more links here" aria-label="Video links"></textarea>
-      <button id="add" class="btn primary" data-icon="plus">Add</button>
+      <div class="paste">
+        <textarea id="paste" rows="1" placeholder="Paste one or more links" aria-label="Video links"></textarea>
+        <button id="add" class="btn primary" data-icon="plus">Add</button>
+      </div>
+      <p class="accepts">YouTube and YouTube Live, Twitch, Vimeo, and direct .mp4 or .webm links.</p>
+      <p class="error" id="paste-error" role="alert"></p>
+
+      <div class="list-head">
+        <h2 id="list-title">Your videos</h2>
+        <button id="clear" class="btn quiet" hidden>Remove all</button>
+      </div>
+      <ul class="videos" id="videos"></ul>
+      <p class="empty" id="empty">Nothing here yet. Paste a link above.</p>
+
+      <section id="saved-section" hidden>
+        <div class="list-head"><h2>Saved sets</h2></div>
+        <ul class="lists" id="saved"></ul>
+      </section>
+
+      <section id="recent-section" hidden>
+        <div class="list-head">
+          <h2>Recently watched</h2>
+          <button id="clear-recent" class="btn quiet">Clear</button>
+        </div>
+        <ul class="lists" id="recent"></ul>
+      </section>
+
+      <details class="help">
+        <summary>How syncing works</summary>
+        <ol>
+          <li>Each video has a start time. All videos begin at their own start time together.</li>
+          <li>A start time can be typed as <kbd>90</kbd>, <kbd>1:30</kbd> or <kbd>1m30s</kbd>. For a live stream it means seconds behind live.</li>
+          <li>While watching, shift any video in 0.1 second steps until they line up. The link updates as you go.</li>
+          <li>The page checks every half second and pulls back any video that drifts.</li>
+          <li>Everything is saved only in this browser. Nothing is uploaded.</li>
+        </ol>
+      </details>
     </div>
-    <p class="error" id="paste-error" role="alert"></p>
 
-    <div class="section-title">
-      <h2 id="list-title">Your videos</h2>
-      <button id="clear" class="btn quiet" hidden>Remove all</button>
-    </div>
-    <ul class="videos" id="videos"></ul>
-    <p class="empty" id="empty">Nothing added yet. Paste a link above to begin.</p>
-
-    <div class="options" id="options" hidden>
-      <div class="row">
-        <span class="note">Sound from</span>
+    <aside class="side" aria-label="Preview and start">
+      <div class="wall" id="wall" aria-label="Preview of your screen"></div>
+      <div class="field">
+        <span>Sound from</span>
         <div class="seg" id="audio">
           <button data-value="solo" class="on">One video</button>
           <button data-value="all">All videos</button>
         </div>
       </div>
-      <button id="save" class="btn quiet">Save this set…</button>
-    </div>
-
-    <section id="saved-section" hidden>
-      <div class="section-title"><h2>Saved sets</h2></div>
-      <ul class="lists" id="saved"></ul>
-    </section>
-
-    <section id="recent-section" hidden>
-      <div class="section-title">
-        <h2>Recently watched</h2>
-        <button id="clear-recent" class="btn quiet">Clear</button>
+      <div class="launch">
+        <a id="go" class="btn primary" data-icon="play" href="#" aria-disabled="true">Watch in sync</a>
+        <button id="copy" class="icon-btn" data-icon="link" aria-label="Copy link" title="Copy link" disabled></button>
       </div>
-      <ul class="lists" id="recent"></ul>
-    </section>
-
-    <details class="help">
-      <summary>How syncing works</summary>
-      <ol>
-        <li>Each video has a start time. All videos begin at their own start time together.</li>
-        <li>Start time accepts <kbd>90</kbd>, <kbd>1:30</kbd> or <kbd>1m30s</kbd>. For a live stream it means "seconds behind live".</li>
-        <li>While watching, shift any video in 0.1 second steps until they line up. The link updates as you go.</li>
-        <li>The page then checks every half second and pulls back any video that drifts.</li>
-        <li>Everything is saved only in this browser. Nothing is uploaded.</li>
-      </ol>
-    </details>
+      <button id="save" class="btn quiet save" hidden>Save this set for later</button>
+    </aside>
   </main>
-
-  <div class="launch">
-    <div class="inner">
-      <span class="count" id="count">Add at least one video</span>
-      <button id="copy" class="btn" data-icon="link" disabled>Copy link</button>
-      <a id="go" class="btn primary" data-icon="play" href="#" aria-disabled="true">Watch in sync</a>
-    </div>
-  </div>
 
   <dialog id="save-dialog">
     <h2>Save this set</h2>
     <form method="dialog" id="save-form">
       <label for="save-name" class="note">Name</label>
       <input type="text" id="save-name" maxlength="60" placeholder="e.g. Morning market streams" required>
-      <div class="row" style="justify-content:flex-end;margin-top:16px">
+      <div class="actions">
         <button type="button" class="btn" id="save-cancel">Cancel</button>
         <button class="btn primary">Save</button>
       </div>

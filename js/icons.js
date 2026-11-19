@@ -26,6 +26,8 @@ const ICONS = {
   edit: stroke('M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4'),
   lock: stroke('M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3'),
   keyboard: stroke('M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10'),
+  back10: `${stroke('M12 6a7 7 0 1 1-6.58 4.6M14.5 3l-3 3 3 3')}<text x="12" y="16" font-size="7" text-anchor="middle" fill="currentColor" font-weight="700" font-family="system-ui,sans-serif">10</text>`,
+  fwd10: `<g transform="translate(24 0) scale(-1 1)">${stroke('M12 6a7 7 0 1 1-6.58 4.6M14.5 3l-3 3 3 3')}</g><text x="12" y="16" font-size="7" text-anchor="middle" fill="currentColor" font-weight="700" font-family="system-ui,sans-serif">10</text>`,
   back: stroke('M11 6l-6 6 6 6M5 12h14'),
 };
 

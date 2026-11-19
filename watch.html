@@ -42,23 +42,24 @@
   </main>
 
   <footer id="dock">
+    <div class="transport">
+      <button id="play" class="icon-btn" data-icon="play" aria-label="Play" title="Play / pause (Space)" disabled></button>
+      <button id="back" class="icon-btn" data-icon="back10" aria-label="Back 10 seconds" title="Back 10 seconds (←)" disabled></button>
+      <button id="fwd" class="icon-btn" data-icon="fwd10" aria-label="Forward 10 seconds" title="Forward 10 seconds (→)" disabled></button>
+    </div>
     <div class="timeline">
       <span id="now">0:00</span>
       <input type="range" id="timeline" min="0" max="0" step="0.1" value="0" aria-label="Position in all videos" disabled>
       <span id="total">0:00</span>
     </div>
-    <div class="bar">
-      <button id="play" class="icon-btn primary" data-icon="play" aria-label="Play" title="Play / pause (Space)" disabled></button>
-      <button id="back" class="text-btn" aria-label="Back 10 seconds" title="Back 10 seconds (←)" disabled>−10</button>
-      <button id="fwd" class="text-btn" aria-label="Forward 10 seconds" title="Forward 10 seconds (→)" disabled>+10</button>
-      <button id="resync" class="icon-btn hide-xs" data-icon="sync" aria-label="Re-sync now" title="Line every video up again now (S)" disabled></button>
-      <button id="golive" class="chip live" title="Jump every live stream to the live edge" hidden>Go live</button>
+    <div class="dock-tools">
       <span id="status" class="status" aria-live="polite"></span>
-
-      <span class="grow"></span>
-
+      <button id="golive" class="chip live" title="Jump every live stream to the live edge" hidden>Go live</button>
+      <button id="resync" class="icon-btn hide-xs" data-icon="sync" aria-label="Re-sync now" title="Line every video up again now (S)" disabled></button>
+      <span class="sep"></span>
       <button id="mute" class="icon-btn" data-icon="volume" aria-label="Mute all" title="Mute everything (M)"></button>
-      <input type="range" id="volume" class="hide-sm" min="0" max="100" value="100" aria-label="Volume">
+      <input type="range" id="volume" min="0" max="100" value="100" aria-label="Volume">
+      <span class="sep"></span>
       <button id="add" class="icon-btn" data-icon="plus" aria-label="Add a video" title="Add a video (A)"></button>
       <button id="chat-btn" class="icon-btn" data-icon="chat" aria-label="Live chat" title="Live chat (C)" hidden></button>
       <button id="grid" class="icon-btn" data-icon="grid" aria-label="Back to grid" title="Show all videos the same size (G)" hidden></button>
@@ -140,7 +141,7 @@
       <dt><kbd>?</kbd></dt><dd>This list</dd>
     </dl>
     <p class="note">Shortcuts work when the page has focus. After clicking inside a video, click the control bar once.</p>
-    <form method="dialog"><button class="btn primary">Close</button></form>
+    <form method="dialog" class="actions"><button class="btn primary">Close</button></form>
   </dialog>
 
   <div id="toast" role="status" hidden></div>

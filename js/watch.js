@@ -11,6 +11,9 @@ const stage = $('stage');
 const settings = loadSettings();
 const session = parseWatch(location.search);
 const MAX_VIDEOS = 16;
+const GAP = 8;
+/** Height of the label strip on each tile; the stylesheet owns the value. */
+const headHeight = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--head')) || 30;
 
 /** One entry per video, in display order. */
 const tiles = [];
@@ -75,8 +78,9 @@ function layout() {
   const width = stage.clientWidth;
   const height = stage.parentElement.clientHeight;
   const focusIndex = tiles.indexOf(state.focus);
-  const stack = focusIndex < 0 && shouldStack(tiles.length, width, height);
-  const rects = stack ? stackRects(tiles.length, width) : computeRects(tiles.length, width, height, focusIndex < 0 ? null : focusIndex);
+  const head = headHeight();
+  const stack = focusIndex < 0 && shouldStack(tiles.length, width, height, GAP, head);
+  const rects = stack ? stackRects(tiles.length, width, GAP, head) : computeRects(tiles.length, width, height, focusIndex < 0 ? null : focusIndex, GAP, head);
   stage.classList.toggle('scroll', stack);
   tiles.forEach((t, i) => {
     Object.assign(t.el.style, { left: `${rects[i].x}px`, top: `${rects[i].y}px`, width: `${rects[i].w}px`, height: `${rects[i].h}px` });
@@ -93,10 +97,11 @@ function setFocus(tile) {
 
 // ---------- tiles ----------
 
-function tool(iconName, label, onClick) {
+function tool(iconName, label, onClick, extraClass = '') {
   const b = document.createElement('button');
-  b.className = 'tool';
-  b.innerHTML = icon(iconName);
+  b.className = `tool ${extraClass}`.trim();
+  if (iconName.startsWith('text:')) b.textContent = iconName.slice(5);
+  else b.innerHTML = icon(iconName);
   b.title = label;
   b.setAttribute('aria-label', label);
   b.addEventListener('click', onClick);
@@ -112,15 +117,17 @@ function addTile(video) {
   const el = document.createElement('div');
   el.className = 'tile';
   el.innerHTML = `
-    <div class="frame"></div>
-    <div class="tile-bar">
-      <span class="num"></span>
+    <div class="tile-head">
+      <button class="num" title="Hear this video"></button>
       <span class="title"></span>
       <span class="badge" hidden>LIVE</span>
       <span class="drift"></span>
       <span class="tools"></span>
     </div>
-    <div class="msg" hidden></div>`;
+    <div class="tile-body">
+      <div class="frame"></div>
+      <div class="msg" hidden></div>
+    </div>`;
   t.el = el;
   const q = (sel) => el.querySelector(sel);
   t.parts = { frame: q('.frame'), num: q('.num'), title: q('.title'), badge: q('.badge'), drift: q('.drift'), msg: q('.msg') };
@@ -135,9 +142,11 @@ function addTile(video) {
   });
   t.parts.audio = tool('volume', 'Hear this video', () => chooseAudio(t));
   t.parts.focus = tool('focus', 'Make this video big', () => setFocus(t));
-  t.parts.minus = tool('earlier', 'Shift 0.1s earlier (Shift-click: 1s)', (e) => nudge(t, e.shiftKey ? -1 : -0.1));
-  t.parts.plus = tool('later', 'Shift 0.1s later (Shift-click: 1s)', (e) => nudge(t, e.shiftKey ? 1 : 0.1));
+  t.parts.focus.classList.add('focus');
+  t.parts.minus = tool('text:−0.1s', 'Shift 0.1s earlier (Shift-click: 1s)', (e) => nudge(t, e.shiftKey ? -1 : -0.1), 'nudge');
+  t.parts.plus = tool('text:+0.1s', 'Shift 0.1s later (Shift-click: 1s)', (e) => nudge(t, e.shiftKey ? 1 : 0.1), 'nudge');
   t.parts.remove = tool('close', 'Remove this video', () => removeTile(t));
+  t.parts.num.addEventListener('click', () => chooseAudio(t));
   q('.tools').append(t.parts.volume, t.parts.audio, t.parts.minus, t.parts.plus, t.parts.focus, t.parts.remove);
 
   tiles.push(t);
@@ -202,8 +211,12 @@ function readInfo(t) {
   if (!info) return;
   if (info.title && info.title !== t.title) {
     t.title = info.title;
-    t.parts.title.textContent = info.author && info.author !== 'Twitch' && info.author !== 'Vimeo' ? `${info.title} · ${info.author}` : info.title;
-    t.parts.title.title = t.parts.title.textContent;
+    t.parts.title.textContent = info.title;
+    t.parts.title.title = info.title;
+    if (info.author && info.author !== 'Twitch' && info.author !== 'Vimeo') {
+      t.parts.title.append(Object.assign(document.createElement('small'), { textContent: info.author }));
+      t.parts.title.title = `${info.title} — ${info.author}`;
+    }
   }
   if (info.live !== t.live) {
     t.live = info.live;
@@ -224,7 +237,7 @@ function readInfo(t) {
 function applyAudio() {
   for (const t of tiles) {
     const audible = !state.mutedAll && t.usable && (state.audio === 'all' || t === state.solo);
-    t.el.classList.toggle('audio', audible && state.audio === 'solo' && tiles.length > 1);
+    t.el.classList.toggle('audio', audible && tiles.length > 1);
     t.parts.audio.classList.toggle('on', audible);
     t.parts.audio.innerHTML = icon(audible ? 'volume' : 'mute');
     t.parts.volume.hidden = state.audio !== 'all';
