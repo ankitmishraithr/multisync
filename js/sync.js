@@ -60,7 +60,7 @@ export function clamp(value, min, max) {
 //   base:     the smallest latency this stream has shown — the best it can do
 //   extra:    seconds the user asked this stream to stay behind (the nudge buttons)
 
-export const LIVE = { JUMP_OVER: 6, FAST_OVER: 3, SLOW_OVER: 1.2, DONE_UNDER: 0.5, AHEAD_BY: 1.5, JUMP_COOLDOWN: 10 };
+export const LIVE = { JUMP_OVER: 6, FAST_OVER: 3, SLOW_OVER: 1.2, DONE_UNDER: 0.5, AHEAD_BY: 1.5, JUMP_COOLDOWN: 4 };
 
 /**
  * Decide what to do with one live stream.
@@ -69,7 +69,9 @@ export const LIVE = { JUMP_OVER: 6, FAST_OVER: 3, SLOW_OVER: 1.2, DONE_UNDER: 0.
 export function planLive({ latency, base, extra = 0, currentRate = 1, sinceJump = Infinity }) {
   const excess = latency - (base + extra);
   if (excess > LIVE.JUMP_OVER) {
-    // Far behind (a long pause or a stall): skip straight to the live point.
+    // Far behind (a long pause or a stall): skip straight to the live point. After a long pause
+    // the player's idea of "newest" is itself out of date, so one jump may land short; the short
+    // cooldown lets the next check jump again (seen with real YouTube: 44s -> 29s -> 19s).
     if (sinceJump > LIVE.JUMP_COOLDOWN) return { action: 'jump', rate: 1, excess };
     return { action: 'none', rate: 1.5, excess };
   }
