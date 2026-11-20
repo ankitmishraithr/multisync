@@ -30,7 +30,7 @@ Do not open `index.html` by double-clicking it. Video sites refuse to play on `f
 5. **Add and remove videos while watching.** The others keep playing.
 6. **Sound.** Hear one video at a time (keys `1`–`9`), or mix all with a volume slider per video.
 7. **Layouts.** Automatic grid, Focus (one big, the rest in a strip), and a scrolling column on phones with many videos.
-8. **Live streams.** LIVE badge and a live chat panel for YouTube and Twitch. Each YouTube live tile shows how many seconds it is behind real time. A stream that falls behind (after a pause or a stall) is pulled back automatically: slightly fast playback for small gaps, a jump for large ones. This can be switched off under More.
+8. **Live streams.** LIVE badge and a live chat panel for YouTube and Twitch. Each YouTube live tile shows how many seconds it is behind real time. A stream that falls behind (after a pause or a stall) is pulled back automatically: slightly fast playback for small gaps, a jump for large ones. This can be switched off under More. Pause stops only the recorded videos; live streams always keep playing.
 9. **Hide controls while playing.** They return when you move the mouse or tap.
 10. **Saved sets and recent sessions**, kept only in your browser.
 11. **Speed control**, full screen, and keyboard shortcuts (press `?` while watching).

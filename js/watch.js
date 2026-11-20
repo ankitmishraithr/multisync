@@ -289,9 +289,14 @@ function play() {
   poke();
 }
 
+/** Pause stops the recorded videos only. Live streams always keep playing, so they never fall behind. */
 function pause() {
+  if (!recorded().length) {
+    toast('Live streams keep playing. Use Mute to silence them.');
+    return;
+  }
   state.playing = false;
-  usable().forEach((t) => safe(() => t.player.pause()));
+  recorded().forEach((t) => safe(() => t.player.pause()));
   render();
   poke();
 }
@@ -532,7 +537,7 @@ function onPlayerState(t, code) {
         seekTile(t, currentT());
         if (state.rate !== 1 && t.player.canRate) safe(() => t.player.setRate(state.rate));
       }
-      if (!state.playing) safe(() => t.player.pause());
+      if (!state.playing && !t.live) safe(() => t.player.pause()); // live streams never pause
     }
   }
 }

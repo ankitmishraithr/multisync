@@ -304,15 +304,23 @@ await check('live: delay is shown, a pause or stall is caught up automatically, 
   assert.ok(p.LIVEAAAAAAA.behind < 16, `starts at the live point (${p.LIVEAAAAAAA.behind.toFixed(1)}s)`);
   assert.equal(p.LIVEAAAAAAA.seeks, 0, 'a level stream is never touched');
 
-  // a short pause: back level by playing slightly fast, no jump
+  // Pause stops the recorded video only; the live stream keeps playing and stays level
   await page.locator('body').press(' ');
   await page.waitForTimeout(2500);
+  p = await players(page);
+  assert.deepEqual([p.LIVEAAAAAAA.state, p[B].state], [1, 2], 'live keeps playing while the recording is paused');
+  assert.equal(await page.getAttribute('#play', 'aria-label'), 'Play');
+  assert.ok(p.LIVEAAAAAAA.behind < 16 && p.LIVEAAAAAAA.rate === 1 && p.LIVEAAAAAAA.seeks === 0, 'and it did not fall behind');
   await page.locator('body').press(' ');
+  await page.waitForFunction((id) => window.__players[id].state === 1, B);
+
+  // a short stall (2.5s behind): back level by playing slightly fast, no jump
+  await page.evaluate(() => window.__players.LIVEAAAAAAA.skew(-2.5));
   await page.waitForFunction(() => window.__players.LIVEAAAAAAA.rate > 1, null, { timeout: 5000 });
   assert.match(await drift.textContent(), /catching up/);
   await page.waitForFunction(() => window.__players.LIVEAAAAAAA.rate === 1 && /^\d+s behind/.test(document.querySelector('.tile .drift').textContent), null, { timeout: 20000 });
   p = await players(page);
-  assert.ok(p.LIVEAAAAAAA.behind < 16.2, `level again after a pause (${p.LIVEAAAAAAA.behind.toFixed(1)}s)`);
+  assert.ok(p.LIVEAAAAAAA.behind < 16.2, `level again after a short stall (${p.LIVEAAAAAAA.behind.toFixed(1)}s)`);
   assert.equal(p.LIVEAAAAAAA.seeks, 0);
   assert.equal(p[B].rate, 1, 'the recorded video keeps normal speed');
 
@@ -335,6 +343,18 @@ await check('live: delay is shown, a pause or stall is caught up automatically, 
   await page.click('#golive'); // the button still works by hand
   await page.waitForFunction(() => window.__players.LIVEAAAAAAA.seeks === 2);
   await page.context().close();
+
+  // only live streams in the session: Pause has nothing to stop, and says so
+  const only = await open('/watch.html?v=LIVEAAAAAAA&v=LIVEBBBBBBB');
+  await begin(only);
+  await only.waitForFunction(() => Object.values(window.__players).every((x) => x.state === 1));
+  await only.click('#play');
+  await only.waitForSelector('#toast:not([hidden])');
+  assert.match(await only.textContent('#toast'), /Live streams keep playing/);
+  p = await players(only);
+  assert.ok(Object.values(p).every((x) => x.state === 1));
+  assert.equal(await only.getAttribute('#play', 'aria-label'), 'Pause');
+  await only.context().close();
 
   // a live stream added while others are playing is not thrown back in time
   const late = await open(`/watch.html?v=${A}&t=100`);
