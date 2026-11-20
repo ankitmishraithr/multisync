@@ -13,7 +13,7 @@ A from-scratch rebuild of the idea behind [viewsync.net](https://viewsync.net/),
 ## Run it
 
 1. Open a terminal in this folder.
-2. Run `npm start` (or `python3 -m http.server 8080`).
+2. Run `npm start` (or `python3 -m http.server 8080`). On a Mac you can instead double-click `start.command`.
 3. Open `http://localhost:8080` in your browser. Use `localhost`, not `127.0.0.1`: Twitch refuses raw IP addresses.
 4. Paste links, press **Add**, then **Watch in sync**.
 5. Click **Start** once.
@@ -30,7 +30,7 @@ Do not open `index.html` by double-clicking it. Video sites refuse to play on `f
 5. **Add and remove videos while watching.** The others keep playing.
 6. **Sound.** Hear one video at a time (keys `1`–`9`), or mix all with a volume slider per video.
 7. **Layouts.** Automatic grid, Focus (one big, the rest in a strip), and a scrolling column on phones with many videos.
-8. **Live streams.** LIVE badge, "Go live" button, never dragged by the sync loop, and a live chat panel for YouTube and Twitch.
+8. **Live streams.** LIVE badge and a live chat panel for YouTube and Twitch. Each YouTube live tile shows how many seconds it is behind real time. A stream that falls behind (after a pause or a stall) is pulled back automatically: slightly fast playback for small gaps, a jump for large ones. This can be switched off under More.
 9. **Hide controls while playing.** They return when you move the mouse or tap.
 10. **Saved sets and recent sessions**, kept only in your browser.
 11. **Speed control**, full screen, and keyboard shortcuts (press `?` while watching).
@@ -83,6 +83,7 @@ Things to know:
 ## Limits you should know
 
 - Sync accuracy is about ±0.5s. Web players report position only a few times a second, so frame-exact sync is not possible.
+- Every live stream is some seconds behind real time before it even reaches you (often 15 to 30s on YouTube, set by the broadcaster). MultiSync keeps a stream at the best delay it has shown; it cannot go below what YouTube delivers.
 - Two live streams of the same event have different delays. Line them up by ear with the nudge buttons (YouTube live only; Twitch live cannot be shifted).
 - Twitch has no speed control, so at speeds other than 1× a Twitch video is re-synced repeatedly.
 - `.m3u8` (HLS) links play in Safari only. Chrome and Firefox cannot play them without an extra library, which this project deliberately avoids.
@@ -92,8 +93,8 @@ Things to know:
 
 ## Tests
 
-1. `npm test`: 32 unit tests for link parsing, layout, sync maths and search results. Needs only Node 18+.
-2. `npm run test:browser`: 14 end-to-end checks in headless Chrome. Needs Playwright (`npm i -D playwright`).
+1. `npm test`: 36 unit tests for link parsing, layout, sync maths and search results. Needs only Node 18+.
+2. `npm run test:browser`: 15 end-to-end checks in headless Chrome. Needs Playwright (`npm i -D playwright`).
 
 The browser checks use offline stand-ins for the YouTube, Twitch and Vimeo players (`tests/mock-players.js`) plus a real audio file for the direct-file player. They cover start-up, drift repair, mixed sources, add/remove, live and chat, both themes, and six screen sizes from 320×568 to 2560×1080.
 

@@ -5,7 +5,7 @@ const SETTINGS_KEY = 'multisync.settings';
 const RECENT_KEY = 'multisync.recent';
 const SAVED_KEY = 'multisync.saved';
 
-export const DEFAULTS = { volume: 100, autoSync: true, threshold: 0.5, theme: 'auto', autoHide: false };
+export const DEFAULTS = { volume: 100, autoSync: true, threshold: 0.5, theme: 'auto', autoHide: false, stayLive: true };
 
 function read(key, fallback) {
   try {

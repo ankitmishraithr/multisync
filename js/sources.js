@@ -56,6 +56,10 @@ class Base {
   state() { return this.current; }
   info() { return { title: '', author: '', live: false }; }
   liveEdge() { return 0; }
+  /** Seconds between real time and the frame on screen, or null when the player cannot tell. */
+  latency() { return null; }
+  /** Skip to the newest point of a live stream. */
+  goLive() {}
   setRate() {}
   destroy() {
     this.dead = true;
@@ -109,6 +113,17 @@ class YouTube extends Base {
   setVolume(v) { this.p.setVolume(v); }
   setRate(r) { this.p.setPlaybackRate(r); }
   liveEdge() { return this.duration(); }
+  latency() {
+    // For a live stream the player reports the wall-clock time of the frame on screen.
+    // (For a recording the same call returns the position in seconds, a small number.)
+    const ref = this.p.getMediaReferenceTime ? this.p.getMediaReferenceTime() : 0;
+    return ref > 1e9 ? Date.now() / 1000 - ref : null;
+  }
+  goLive() {
+    // getDuration() is stale on live streams (seen in real testing: seeking to it can go
+    // backwards), so ask for a point far in the future and let the player clamp to live.
+    this.p.seekTo(this.p.getCurrentTime() + 100000, true);
+  }
   info() {
     const d = (this.p && this.p.getVideoData && this.p.getVideoData()) || {};
     return { title: d.title || '', author: d.author || '', live: Boolean(d.isLive) };
@@ -266,6 +281,7 @@ class FileVideo extends Base {
   setVolume(v) { this.el.volume = Math.min(1, Math.max(0, v / 100)); }
   setRate(r) { this.el.playbackRate = r; }
   liveEdge() { return this.el.seekable.length ? this.el.seekable.end(this.el.seekable.length - 1) : 0; }
+  goLive() { const edge = this.liveEdge(); if (edge > 0) this.el.currentTime = edge; }
   info() { return { title: shortName(this.video), author: '', live: this.el.duration === Infinity }; }
   destroy() {
     this.el.removeAttribute('src');

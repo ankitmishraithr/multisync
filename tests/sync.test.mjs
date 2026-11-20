@@ -55,3 +55,29 @@ test('shared timeline ends when the first recorded video ends', () => {
   assert.equal(d, 300);
   assert.equal(sharedDuration([tile({ live: true })]), 0);
 });
+
+import { planLive } from '../js/sync.js';
+
+test('live: level streams are left alone', () => {
+  assert.deepEqual(planLive({ latency: 17.2, base: 17 }), { action: 'none', rate: 1, excess: 17.2 - 17 });
+});
+
+test('live: a short pause is recovered by playing slightly fast, then back to normal', () => {
+  assert.equal(planLive({ latency: 19, base: 17 }).rate, 1.25);
+  assert.equal(planLive({ latency: 21, base: 17 }).rate, 1.5);
+  assert.equal(planLive({ latency: 18, base: 17, currentRate: 1.25 }).rate, 1.25, 'keeps going until nearly level');
+  assert.equal(planLive({ latency: 17.3, base: 17, currentRate: 1.25 }).rate, 1);
+});
+
+test('live: far behind jumps to the live point, but not twice in a row', () => {
+  assert.equal(planLive({ latency: 30, base: 17 }).action, 'jump');
+  const soon = planLive({ latency: 30, base: 17, sinceJump: 3 });
+  assert.deepEqual([soon.action, soon.rate], ['none', 1.5]);
+});
+
+test('live: a delay the user asked for is respected in both directions', () => {
+  assert.equal(planLive({ latency: 22, base: 17, extra: 5 }).action, 'none');
+  assert.equal(planLive({ latency: 22, base: 17, extra: 5 }).rate, 1);
+  assert.equal(planLive({ latency: 17, base: 17, extra: 5 }).action, 'back');
+  assert.equal(planLive({ latency: 30, base: 17, extra: 5 }).action, 'jump');
+});

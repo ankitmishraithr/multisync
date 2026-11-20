@@ -50,3 +50,34 @@ export function sharedDuration(tiles) {
 export function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
+
+// ---------- live streams ----------
+// A live stream has no shared timeline. What matters is how far behind "now" it is.
+// Players fall behind every time they pause or buffer and never catch up on their own,
+// so the page measures the delay and pulls the stream back.
+//
+//   latency:  seconds between real time and the frame on screen (measured)
+//   base:     the smallest latency this stream has shown — the best it can do
+//   extra:    seconds the user asked this stream to stay behind (the nudge buttons)
+
+export const LIVE = { JUMP_OVER: 6, FAST_OVER: 3, SLOW_OVER: 1.2, DONE_UNDER: 0.5, AHEAD_BY: 1.5, JUMP_COOLDOWN: 10 };
+
+/**
+ * Decide what to do with one live stream.
+ * Returns { action: 'none' | 'jump' | 'back', rate, excess } — rate is the playback speed to use.
+ */
+export function planLive({ latency, base, extra = 0, currentRate = 1, sinceJump = Infinity }) {
+  const excess = latency - (base + extra);
+  if (excess > LIVE.JUMP_OVER) {
+    // Far behind (a long pause or a stall): skip straight to the live point.
+    if (sinceJump > LIVE.JUMP_COOLDOWN) return { action: 'jump', rate: 1, excess };
+    return { action: 'none', rate: 1.5, excess };
+  }
+  if (excess < -LIVE.AHEAD_BY) return { action: 'back', rate: 1, excess }; // closer to live than the user asked
+  let rate = currentRate;
+  if (excess > LIVE.FAST_OVER) rate = 1.5; // a little behind: play slightly fast until level
+  else if (excess > LIVE.SLOW_OVER) rate = 1.25;
+  else if (excess < LIVE.DONE_UNDER) rate = 1;
+  else rate = Math.min(currentRate, 1.25); // nearly level: keep going gently until it is
+  return { action: 'none', rate, excess };
+}

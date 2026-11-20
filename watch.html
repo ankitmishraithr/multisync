@@ -54,7 +54,7 @@
     </div>
     <div class="dock-tools">
       <span id="status" class="status" aria-live="polite"></span>
-      <button id="golive" class="chip live" title="Jump every live stream to the live edge" hidden>Go live</button>
+      <button id="golive" class="chip live" title="Jump every live stream to the newest point" hidden>Go live</button>
       <button id="resync" class="icon-btn hide-xs" data-icon="sync" aria-label="Re-sync now" title="Line every video up again now (S)" disabled></button>
       <span class="sep"></span>
       <button id="mute" class="icon-btn" data-icon="volume" aria-label="Mute all" title="Mute everything (M)"></button>
@@ -100,6 +100,10 @@
     <div class="field">
       <label for="autosync">Keep videos in sync automatically</label>
       <input type="checkbox" id="autosync" class="switch" checked>
+    </div>
+    <div class="field">
+      <label for="staylive">Keep live streams at the live point</label>
+      <input type="checkbox" id="staylive" class="switch" checked>
     </div>
     <div class="field">
       <label for="threshold">Correct when off by more than</label>

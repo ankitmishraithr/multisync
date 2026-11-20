@@ -62,7 +62,7 @@ async function check(name, fn) {
   try { await fn(); results.push(`ok   ${name}`); }
   catch (e) { results.push(`FAIL ${name}\n     ${e.message.split('\n')[0]}`); process.exitCode = 1; }
 }
-const players = (page) => page.evaluate(() => Object.fromEntries(Object.entries(window.__players).map(([id, p]) => [id, { t: p.t, state: p.state, muted: p.muted, rate: p.rate, vol: p.volume, seeks: p.seeks }])));
+const players = (page) => page.evaluate(() => Object.fromEntries(Object.entries(window.__players).map(([id, p]) => [id, { t: p.t, state: p.state, muted: p.muted, rate: p.rate, vol: p.volume, seeks: p.seeks, behind: Date.now() / 1000 - p.reference() }])));
 const begin = async (page) => {
   await page.waitForFunction(() => document.getElementById('start').dataset.action === 'start' && !document.getElementById('start').disabled);
   await page.click('#start');
@@ -292,6 +292,71 @@ await check('watch: add and remove videos without restarting the others', async 
   await begin(empty);
   await empty.waitForFunction(() => window.__players.AAAAAAAAAAA.state === 1);
   await empty.context().close();
+});
+
+await check('live: delay is shown, a pause or stall is caught up automatically, and it can be switched off', async () => {
+  const page = await open(`/watch.html?v=LIVEAAAAAAA&v=${B}&t=5`);
+  await begin(page);
+  const drift = page.locator('.tile').nth(0).locator('.drift');
+  await page.waitForFunction(() => /behind real time/.test(document.querySelector('.tile .drift').textContent));
+  assert.match(await drift.textContent(), /^1[4-6]s behind real time$/);
+  let p = await players(page);
+  assert.ok(p.LIVEAAAAAAA.behind < 16, `starts at the live point (${p.LIVEAAAAAAA.behind.toFixed(1)}s)`);
+  assert.equal(p.LIVEAAAAAAA.seeks, 0, 'a level stream is never touched');
+
+  // a short pause: back level by playing slightly fast, no jump
+  await page.locator('body').press(' ');
+  await page.waitForTimeout(2500);
+  await page.locator('body').press(' ');
+  await page.waitForFunction(() => window.__players.LIVEAAAAAAA.rate > 1, null, { timeout: 5000 });
+  assert.match(await drift.textContent(), /catching up/);
+  await page.waitForFunction(() => window.__players.LIVEAAAAAAA.rate === 1 && /^\d+s behind/.test(document.querySelector('.tile .drift').textContent), null, { timeout: 20000 });
+  p = await players(page);
+  assert.ok(p.LIVEAAAAAAA.behind < 16.2, `level again after a pause (${p.LIVEAAAAAAA.behind.toFixed(1)}s)`);
+  assert.equal(p.LIVEAAAAAAA.seeks, 0);
+  assert.equal(p[B].rate, 1, 'the recorded video keeps normal speed');
+
+  // a long stall (10s behind): jumps to live, then closes the last few seconds
+  await page.evaluate(() => window.__players.LIVEAAAAAAA.skew(-10));
+  await page.waitForFunction(() => window.__players.LIVEAAAAAAA.seeks === 1, null, { timeout: 5000 });
+  await page.waitForFunction(() => window.__players.LIVEAAAAAAA.rate === 1 && /^\d+s behind/.test(document.querySelector('.tile .drift').textContent), null, { timeout: 25000 });
+  p = await players(page);
+  assert.ok(p.LIVEAAAAAAA.behind < 16.2, `level again after a stall (${p.LIVEAAAAAAA.behind.toFixed(1)}s)`);
+
+  // switched off: the page only reports the delay
+  await page.click('#more');
+  await page.uncheck('#staylive');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.__players.LIVEAAAAAAA.skew(-10));
+  await page.waitForTimeout(2500);
+  p = await players(page);
+  assert.ok(p.LIVEAAAAAAA.behind > 24 && p.LIVEAAAAAAA.rate === 1 && p.LIVEAAAAAAA.seeks === 1, 'left alone when switched off');
+  assert.match(await drift.textContent(), /^2[4-6]s behind real time$/);
+  await page.click('#golive'); // the button still works by hand
+  await page.waitForFunction(() => window.__players.LIVEAAAAAAA.seeks === 2);
+  await page.context().close();
+
+  // a live stream added while others are playing is not thrown back in time
+  const late = await open(`/watch.html?v=${A}&t=100`);
+  await begin(late);
+  await late.locator('#timeline').fill('200');
+  await late.locator('#timeline').dispatchEvent('change');
+  await late.click('#add');
+  await late.fill('#add-input', 'https://www.youtube.com/live/LIVEZZZZZZZ');
+  await late.keyboard.press('Enter');
+  await late.waitForFunction(() => window.__players.LIVEZZZZZZZ?.state === 1);
+  await late.waitForTimeout(1200);
+  p = await players(late);
+  assert.equal(p.LIVEZZZZZZZ.seeks, 0);
+  assert.ok(p.LIVEZZZZZZZ.behind < 16.5, `joined at live (${p.LIVEZZZZZZZ.behind.toFixed(1)}s)`);
+  await late.click('#add');
+  await late.fill('#add-input', `https://youtu.be/${C}?t=40`);
+  await late.keyboard.press('Enter');
+  await late.waitForFunction(() => window.__players.CCCCCCCCCCC?.state === 1);
+  await inSync(late);
+  p = await players(late);
+  assert.ok(Math.abs(p[C].t - 40 - (p[A].t - 100)) < 0.4, 'a recorded video added late still joins in sync');
+  await late.context().close();
 });
 
 // ---------- YouTube search (official API mocked; suggestions mocked) ----------

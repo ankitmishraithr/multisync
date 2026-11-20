@@ -13,7 +13,15 @@
       window.__players[id] = this;
     }
     set(state) { this.state = state; this.onState(state); }
-    now() { return this.since == null ? this.base : this.base + ((performance.now() - this.since) / 1000) * this.rate; }
+    // A live stream's newest point moves forward with the clock; playback can never pass it.
+    edge() { return 3600 + (performance.now() - this.created) / 1000; }
+    now() {
+      const pos = this.since == null ? this.base : this.base + ((performance.now() - this.since) / 1000) * this.rate;
+      return this.live ? Math.min(pos, this.edge()) : pos;
+    }
+    // Like real YouTube: wall-clock time of the frame on screen for live (about 15s behind at best),
+    // plain position for a recording.
+    reference() { return this.live ? Date.now() / 1000 - 15 - (this.edge() - this.now()) : this.now(); }
     get t() { return this.now(); }
     skew(sec) { this.base += sec; }
     play() {
@@ -26,6 +34,7 @@
       }
       this.pending = true;
       this.set(S.BUFFERING);
+      if (this.live && this.plays === 1) this.base = this.edge(); // a fresh join starts at the live point
       setTimeout(() => { this.pending = false; this.since = performance.now(); this.set(S.PLAYING); }, this.id.startsWith('SLOW') ? 1500 : 120);
     }
     pause() {
@@ -34,7 +43,12 @@
       this.since = null;
       this.set(S.PAUSED);
     }
-    seek(t) { this.seeks++; this.base = t; if (this.since != null) this.since = performance.now(); }
+    seek(t) {
+      this.seeks++;
+      // seeking past the end of a live stream lands a few seconds short of the newest point, as on YouTube
+      this.base = this.live && t > this.edge() ? this.edge() - 4 : t;
+      if (this.since != null) this.since = performance.now();
+    }
     setRate(r) { this.base = this.now(); if (this.since != null) this.since = performance.now(); this.rate = r; }
     duration() { return this.live ? 3600 + (performance.now() - this.created) / 1000 : this.length; }
   }
@@ -62,6 +76,7 @@
     seekTo(t) { this.sim.seek(t); }
     getCurrentTime() { return this.sim.now(); }
     getDuration() { return this.sim.duration(); }
+    getMediaReferenceTime() { return this.sim.reference(); }
     getPlayerState() { return this.sim.state; }
     getVideoData() { return { video_id: this.sim.id, title: `Title ${this.sim.id}`, author: 'Channel', isLive: this.sim.live }; }
     mute() { this.sim.muted = true; }

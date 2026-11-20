@@ -1,6 +1,6 @@
 import { parseWatch, buildQuery, formatTime, videoKey, sourceUrl, shortName, SOURCE_LABEL } from './parse.js';
 import { computeRects, stackRects, shouldStack } from './layout.js';
-import { STATE, planCorrections, sharedDuration, targetTime, clamp } from './sync.js';
+import { STATE, planCorrections, planLive, sharedDuration, targetTime, clamp } from './sync.js';
 import { loadSettings, saveSettings, rememberSession } from './store.js';
 import { createPlayer, chatUrl } from './sources.js';
 import { hydrateIcons, setIcon, icon } from './icons.js';
@@ -114,6 +114,7 @@ function addTile(video) {
     uid: nextUid++, video: { kind: video.kind, id: video.id }, start: video.start || 0,
     player: null, ready: false, usable: true, live: video.kind === 'twitch', primed: false,
     title: '', volume: 100, lastFix: 0, lastKick: 0, el: null, parts: {},
+    liveBase: null, liveSettle: 0, liveRate: 1, lastLiveJump: -Infinity, joining: false,
   };
   const el = document.createElement('div');
   el.className = 'tile';
@@ -282,6 +283,8 @@ function seekAll(T) {
 function play() {
   state.playing = true;
   usable().forEach((t) => safe(() => t.player.play()));
+  // Coming back from a pause, live streams are behind by however long the pause was.
+  // The loop in tickLive() brings them back; nothing to do here.
   render();
   poke();
 }
@@ -310,24 +313,69 @@ function resync() {
   toast('Re-synced');
 }
 
-function liveSeek(t) {
+function setLiveRate(t, rate) {
+  if (t.liveRate === rate) return;
+  t.liveRate = rate;
+  safe(() => t.player.setRate(rate));
+}
+
+/** Skip one live stream to its newest point, then step back by any delay the user asked for. */
+function liveJump(t) {
   if (!t.player.canSeekLive) return;
-  const edge = safe(() => t.player.liveEdge(), 0);
-  if (edge > 0) safe(() => t.player.seek(Math.max(0, edge - t.start)));
+  const now = performance.now();
+  t.lastLiveJump = now;
+  t.liveSettle = now + 3500; // readings are meaningless while the player re-buffers
+  setLiveRate(t, 1);
+  safe(() => t.player.goLive());
+  if (t.start > 0) {
+    setTimeout(() => {
+      if (tiles.includes(t) && t.live) safe(() => t.player.seek(t.player.time() - t.start));
+    }, 2500);
+  }
 }
 
 function goLive() {
   usable().filter((t) => t.live).forEach((t) => {
-    liveSeek(t);
+    liveJump(t);
     safe(() => t.player.play());
   });
+  state.playing = true;
   toast('Jumped to live');
+}
+
+/**
+ * Keep every live stream at its live point. A stream falls behind each time it pauses
+ * or buffers and never recovers on its own; this measures the delay and pulls it back:
+ * slightly fast playback for a few seconds, or a jump when it is far behind.
+ */
+function tickLive(snap, now) {
+  tiles.forEach((t, i) => {
+    if (!t.live || !snap[i].usable) return;
+    const latency = safe(() => t.player.latency(), null);
+    if (latency == null || !Number.isFinite(latency)) return; // this source cannot measure it
+    const label = (text) => { t.parts.drift.textContent = text; t.parts.drift.classList.remove('bad'); };
+    if (snap[i].state !== STATE.PLAYING) return label(snap[i].state === STATE.BUFFERING ? 'buffering' : '');
+    if (now < t.liveSettle) return label('going live…');
+    if (t.liveBase == null || latency < t.liveBase) t.liveBase = latency;
+    const behind = `${Math.max(0, Math.round(latency))}s behind real time`;
+    if (!settings.stayLive) { setLiveRate(t, 1); return label(behind); }
+    const plan = planLive({ latency, base: t.liveBase, extra: t.start, currentRate: t.liveRate, sinceJump: (now - t.lastLiveJump) / 1000 });
+    if (plan.action === 'jump') { liveJump(t); return label('going live…'); }
+    if (plan.action === 'back' && now - t.lastLiveJump > 5000) {
+      t.lastLiveJump = now;
+      t.liveSettle = now + 2500;
+      safe(() => t.player.seek(t.player.time() + plan.excess));
+      return label(behind);
+    }
+    setLiveRate(t, plan.rate);
+    label(plan.rate > 1 ? `catching up, ${behind}` : behind);
+  });
 }
 
 /** Shift one video against the others, apply it at once, and keep it in the link. */
 function nudge(t, delta) {
   t.start = Math.max(0, Math.round((t.start + delta) * 10) / 10);
-  if (state.phase === 'running') t.live ? liveSeek(t) : seekTile(t, currentT());
+  if (state.phase === 'running' && !t.live) seekTile(t, currentT()); // a live stream is moved by tickLive()
   t.lastFix = performance.now();
   toast(t.live ? `Video ${number(t)}: ${t.start.toFixed(1)}s behind live` : `Video ${number(t)} starts at ${formatTime(t.start, true)}`);
   syncUrl();
@@ -443,8 +491,7 @@ async function start() {
 
   usable().forEach((t) => {
     readInfo(t);
-    if (t.live) { if (t.start > 0) liveSeek(t); }
-    else safe(() => t.player.seek(t.start));
+    if (!t.live) safe(() => t.player.seek(t.start)); // live streams are handled by tickLive()
   });
 
   state.phase = 'running';
@@ -462,9 +509,10 @@ async function start() {
 function joinRunning(t) {
   t.primed = true;
   safe(() => t.player.setMuted(true));
-  if (!t.live) seekTile(t, currentT());
-  if (state.rate !== 1 && t.player.canRate) safe(() => t.player.setRate(state.rate));
-  if (state.playing) safe(() => t.player.play());
+  // YouTube only says whether a video is live once it plays, so the first seek waits for that
+  // (seeking a live stream to "2 minutes in" would throw it hours into the past).
+  t.joining = true;
+  safe(() => t.player.play());
   applyAudio();
   syncUrl();
 }
@@ -476,7 +524,17 @@ function onPlayerState(t, code) {
     readInfo(t);
     if (!t.live) safe(() => t.player.pause()); // hold recorded videos; live keeps buffering
   }
-  if (state.phase === 'running' && code === STATE.PLAYING) readInfo(t);
+  if (state.phase === 'running' && code === STATE.PLAYING) {
+    readInfo(t);
+    if (t.joining) {
+      t.joining = false;
+      if (!t.live) {
+        seekTile(t, currentT());
+        if (state.rate !== 1 && t.player.canRate) safe(() => t.player.setRate(state.rate));
+      }
+      if (!state.playing) safe(() => t.player.pause());
+    }
+  }
 }
 
 function applyRate() {
@@ -506,8 +564,11 @@ function tick() {
     } else if (s.usable && s.state === STATE.BUFFERING) {
       label = 'buffering';
     }
+    if (t.live) return; // live tiles are labelled by tickLive()
     t.parts.drift.textContent = label;
   });
+
+  tickLive(snap, now);
 
   if (settings.autoSync && state.playing) {
     for (const fix of plan.fixes) {
@@ -727,6 +788,11 @@ function wire() {
   $('threshold').value = String(settings.threshold);
   $('threshold').addEventListener('change', (e) => {
     settings.threshold = Number(e.target.value) || 0.5;
+    saveSettings(settings);
+  });
+  $('staylive').checked = settings.stayLive;
+  $('staylive').addEventListener('change', (e) => {
+    settings.stayLive = e.target.checked;
     saveSettings(settings);
   });
   $('autohide').checked = settings.autoHide;
