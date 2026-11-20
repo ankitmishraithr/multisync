@@ -191,6 +191,7 @@ function removeTile(t) {
   if (state.solo === t) state.solo = tiles.find((x) => x.usable) || tiles[0] || null;
   layout();
   applyAudio();
+  refreshBadges();
   refreshChatButton();
   updateGate();
   syncUrl();
@@ -213,8 +214,26 @@ function failTile(t, message) {
   t.parts.msg.append(strong, text, row);
   if (state.solo === t) state.solo = tiles.find((x) => x.usable) || state.solo;
   applyAudio();
+  refreshBadges();
   refreshChatButton();
   updateGate();
+}
+
+/**
+ * LIVE (red) for a stream that is live now, ENDED for one that stopped while you watched,
+ * and RECORDED (grey) for ordinary videos when the session also has live streams — so a
+ * finished broadcast whose title still says "LIVE" is not mistaken for a live one.
+ */
+function refreshBadges() {
+  const anyLive = tiles.some((t) => t.live && t.usable && !t.ended);
+  for (const t of tiles) {
+    const kind = t.ended ? 'ENDED' : t.live ? 'LIVE' : anyLive && t.usable && t.ready ? 'RECORDED' : '';
+    t.parts.badge.hidden = !kind;
+    t.parts.badge.textContent = kind || 'LIVE';
+    t.parts.badge.classList.toggle('ended', kind === 'ENDED' || kind === 'RECORDED');
+    t.parts.badge.title = kind === 'RECORDED' ? 'This is a recording, not a live stream' : '';
+  }
+  $('golive').hidden = !anyLive;
 }
 
 function readInfo(t) {
@@ -229,17 +248,14 @@ function readInfo(t) {
       t.parts.title.title = `${info.title} — ${info.author}`;
     }
   }
-  if (!t.ended && info.live !== t.live) {
-    t.live = info.live;
-    t.parts.badge.hidden = !t.live;
-  }
+  if (!t.ended) t.live = info.live;
   const canNudge = !t.live || t.player.canSeekLive;
   t.parts.minus.hidden = t.parts.plus.hidden = !canNudge;
   if (t.live) {
     t.parts.minus.title = 'Move 0.1s closer to live';
     t.parts.plus.title = 'Move 0.1s further behind live';
   }
-  $('golive').hidden = !tiles.some((x) => x.live && x.usable);
+  refreshBadges();
   refreshChatButton();
 }
 
@@ -534,9 +550,6 @@ function markEnded(t) {
   t.ended = true;
   t.live = false;
   setLiveRate(t, 1);
-  t.parts.badge.textContent = 'ENDED';
-  t.parts.badge.classList.add('ended');
-  t.parts.badge.hidden = false;
   t.parts.drift.textContent = '';
   const watch = Object.assign(document.createElement('button'), { className: 'btn primary', textContent: 'Watch the recording' });
   watch.addEventListener('click', () => reloadAsRecording(t));
@@ -552,7 +565,7 @@ function markEnded(t) {
   t.parts.ended.hidden = false;
   if (state.solo === t) state.solo = tiles.find((x) => x.usable && !x.ended) || t;
   applyAudio();
-  $('golive').hidden = !tiles.some((x) => x.live && x.usable);
+  refreshBadges();
   refreshChatButton();
   toast(`Video ${number(t)}: the live stream has ended`);
 }
@@ -563,9 +576,7 @@ function reloadAsRecording(t) {
   Object.assign(t, { ended: false, live: false, ready: false, usable: true, primed: false, liveBase: null, liveRate: 1, start: 0, joining: false });
   t.parts.ended.hidden = true;
   t.parts.msg.hidden = true;
-  t.parts.badge.hidden = true;
-  t.parts.badge.textContent = 'LIVE';
-  t.parts.badge.classList.remove('ended');
+  refreshBadges();
   mountPlayer(t);
   syncUrl();
 }

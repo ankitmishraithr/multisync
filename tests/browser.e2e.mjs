@@ -196,7 +196,7 @@ await check('watch: a blocked video does not stop the others; live is recognised
   assert.equal(p[A].state, 1);
   assert.equal(p.LIVECCCCCCC.state, 1);
   assert.ok(Math.abs(p[B].t - 5 - p[A].t) < 0.3);
-  assert.equal(await page.locator('.tile').nth(2).locator('.badge').getAttribute('hidden'), null);
+  assert.deepEqual(await page.locator('.tile .badge').evaluateAll((els) => els.map((e) => (e.hidden ? '' : e.textContent))), ['RECORDED', '', 'LIVE', 'RECORDED'], 'recordings are marked when live streams are present');
   assert.ok(await page.locator('#golive').isVisible());
   assert.equal(await page.textContent('#total'), '9:55'); // live + blocked ignored
   await page.waitForTimeout(1500); // live stream is never dragged around by the sync loop
@@ -358,6 +358,7 @@ await check('live: delay is shown, a pause or stall is caught up automatically, 
   await page.evaluate(() => window.__players.LIVEAAAAAAA.end());
   await page.waitForSelector('.tile .ended-note:not([hidden])');
   assert.equal(await badge.textContent(), 'ENDED');
+  assert.ok(await page.locator('.tile').nth(1).locator('.badge').isHidden(), 'with no live stream left, the RECORDED mark is not needed');
   assert.match(await page.locator('.tile').nth(0).locator('.ended-note').textContent(), /This live stream has ended/);
   assert.equal(await drift.textContent(), '');
   assert.ok(await page.locator('#golive').isHidden(), 'no live streams left, so no Go live button');
