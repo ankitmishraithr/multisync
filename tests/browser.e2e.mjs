@@ -60,7 +60,7 @@ async function open(path, { mock = true, viewport = { width: 1280, height: 720 }
 }
 async function check(name, fn) {
   try { await fn(); results.push(`ok   ${name}`); }
-  catch (e) { results.push(`FAIL ${name}\n     ${e.message.split('\n')[0]}`); process.exitCode = 1; }
+  catch (e) { results.push(`FAIL ${name}\n     ${e.message.split('\n').slice(0, 6).join(' / ')}`); process.exitCode = 1; }
 }
 const players = (page) => page.evaluate(() => Object.fromEntries(Object.entries(window.__players).map(([id, p]) => [id, { t: p.t, state: p.state, muted: p.muted, rate: p.rate, vol: p.volume, seeks: p.seeks, behind: Date.now() / 1000 - p.reference() }])));
 const begin = async (page) => {
@@ -455,7 +455,7 @@ await check('search: suggestions, one-time key setup, add several from one searc
   await page.keyboard.press('Enter');
   assert.equal(await page.inputValue('#paste'), 'nifty live');
   // first search ever: explains the free key instead of failing
-  assert.match(await page.textContent('#results'), /free YouTube key/);
+  await page.waitForFunction(() => /Search needs one of two things/.test(document.getElementById('results').textContent));
   assert.equal(log.length, 0, 'nothing is sent without a key');
   await page.fill('#results input', 'short');
   await page.click('#results >> text=Save key');
@@ -515,6 +515,91 @@ await check('search: suggestions, one-time key setup, add several from one searc
   await limited.click('#add');
   await limited.waitForFunction(() => /used up/.test(document.getElementById('paste-error').textContent));
   await limited.context().close();
+});
+
+await check('search with no key: MultiSync\'s own server reads YouTube\'s results page', async () => {
+  // A stand-in for youtube.com that serves the same page shape, and the real server.js pointed at it.
+  const asked = [];
+  const vid = (id, title, extra = {}) => ({ videoRenderer: { videoId: id, title: { runs: [{ text: title }] }, ownerText: { runs: [{ text: 'Market Channel' }] }, ...extra } });
+  const fakeYouTube = http.createServer((req, res) => {
+    const u = new URL(req.url, 'http://x');
+    asked.push(u.searchParams);
+    const q = u.searchParams.get('search_query');
+    if (q === 'broken') return res.writeHead(200, { 'content-type': 'text/html' }).end('<html>Something completely different</html>');
+    const live = u.searchParams.get('sp') === 'EgJAAQ==';
+    const items = live
+      ? [vid('LIVEDDDDDDD', 'Live one', { badges: [{ metadataBadgeRenderer: { style: 'BADGE_STYLE_TYPE_LIVE_NOW' } }] })]
+      : [vid('DDDDDDDDDDD', 'First } "quoted" & best', { lengthText: { simpleText: '1:02:03' } }), vid('EEEEEEEEEEE', 'Second', { lengthText: { simpleText: '4:13' } }), vid('LIVEDDDDDDD', 'Live one', { badges: [{ metadataBadgeRenderer: { style: 'BADGE_STYLE_TYPE_LIVE_NOW' } }] })];
+    res.writeHead(200, { 'content-type': 'text/html' }).end(`<html><script>var ytInitialData = ${JSON.stringify({ contents: [{ itemSectionRenderer: { contents: items } }] })};</script></html>`);
+  });
+  await new Promise((r) => fakeYouTube.listen(0, r));
+  const { spawn } = await import('node:child_process');
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const app = spawn(process.execPath, ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port), MULTISYNC_YT_ORIGIN: `http://localhost:${fakeYouTube.address().port}` }, stdio: 'ignore' });
+  const own = `http://localhost:${port}`;
+  try {
+    for (let i = 0; i < 40; i++) { try { if ((await fetch(`${own}/api/health`)).ok) break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+    // the server only hands out its own files
+    assert.equal((await fetch(`${own}/.git/config`)).status, 404);
+    assert.equal((await fetch(`${own}/js/%2e%2e/%2e%2e/etc/passwd`)).status, 404);
+    assert.equal((await fetch(`${own}/api/search`)).status, 400);
+    assert.equal((await fetch(`${own}/api/search?q=x`, { method: 'POST' })).status, 405);
+    assert.equal((await fetch(`${own}/api/search?q=x`)).headers.get('access-control-allow-origin'), null, 'other websites cannot use it');
+
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await ctx.route(/ytimg\.com|youtube\.com|twitch\.tv|vimeo\.com|googleapis\.com|suggestqueries/, (route) => route.abort());
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => problems.push(`keyless: ${e.message}`));
+    await page.goto(`${own}/index.html`);
+    await page.fill('#paste', 'nifty live');
+    await page.click('#add');
+    await page.waitForSelector('#results .result');
+    assert.equal(await page.evaluate(() => localStorage.getItem('multisync.youtubeKey')), null, 'no key was needed');
+    assert.deepEqual(await page.locator('#results .result strong').allTextContents(), ['First } "quoted" & best', 'Second', 'Live one']);
+    assert.deepEqual(await page.locator('#results .len').allTextContents(), ['1:02:03', '4:13']);
+    assert.equal(await page.locator('#results .result .badge').count(), 1);
+    assert.match(await page.textContent('#results .results-foot'), /No key needed/);
+    assert.equal(await page.locator('#results .results-head .link-btn').count(), 0, 'no Key button when no key is in use');
+    assert.equal(asked.at(-1).get('search_query'), 'nifty live');
+    await page.locator('#results .result').nth(0).click();
+    await page.locator('#results .result').nth(2).click();
+    assert.equal(await page.locator('#videos li').count(), 2);
+    await page.click('#results >> text=Live now');
+    await page.waitForFunction(() => document.querySelectorAll('#results .result').length === 1);
+    assert.equal(asked.at(-1).get('sp'), 'EgJAAQ==');
+    const before = asked.length;
+    await page.click('#results >> text=All');
+    await page.waitForFunction(() => document.querySelectorAll('#results .result').length === 3);
+    assert.equal(asked.length, before, 'a repeated search is answered from memory');
+
+    // YouTube changes its page: say so plainly and offer the key as a way out
+    await page.fill('#paste', 'broken');
+    await page.click('#add');
+    await page.waitForFunction(() => /could not read YouTube/.test(document.getElementById('results').textContent));
+    assert.match(await page.textContent('#results'), /add a free key/);
+    // ...and with a key already saved, it is used without any fuss
+    await mockSearch(page, []);
+    await page.fill('#results input', KEY);
+    await page.click('#results >> text=Save key');
+    await page.waitForSelector('#results .result');
+    assert.match(await page.textContent('#results .results-foot'), /free searches a day/);
+
+    // the viewer's + panel uses the same keyless search
+    const watch = await ctx.newPage();
+    await watch.addInitScript({ path: join(root, 'tests', 'mock-players.js') });
+    await watch.goto(`${own}/watch.html?v=${A}`);
+    await begin(watch);
+    await watch.click('#add');
+    await watch.fill('#add-input', 'market open');
+    await watch.keyboard.press('Enter');
+    await watch.waitForSelector('#add-results .result');
+    await watch.locator('#add-results .result').nth(1).click();
+    assert.equal(await watch.locator('.tile').count(), 2);
+    await ctx.close();
+  } finally {
+    app.kill();
+    fakeYouTube.close();
+  }
 });
 
 await check('search inside the viewer: pick several results while the videos keep playing', async () => {

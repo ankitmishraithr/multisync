@@ -85,7 +85,8 @@ export function explainError(status, json) {
 export class SearchError extends Error {
   constructor(info) {
     super(info.text);
-    this.badKey = info.badKey;
+    this.badKey = Boolean(info.badKey);
+    this.local = Boolean(info.local); // the keyless search through MultiSync's own server failed
   }
 }
 
@@ -117,6 +118,45 @@ export async function searchYouTube({ q, key, live = false, pageToken = '' }) {
       /* durations are a nicety; results are still useful without them */
     }
   }
+  cache.set(cacheKey, page);
+  return page;
+}
+
+// ---------- search without a key, through MultiSync's own server (server.js) ----------
+
+let localSearch = null; // unknown until asked once
+
+/** True when the page was opened from MultiSync's own server, which can search without a key. */
+export async function localSearchAvailable() {
+  if (localSearch != null) return localSearch;
+  try {
+    const response = await fetch('api/health');
+    const json = response.ok ? await response.json() : null;
+    localSearch = Boolean(json && json.search);
+  } catch {
+    localSearch = false;
+  }
+  return localSearch;
+}
+
+export async function searchLocal({ q, live = false }) {
+  const cacheKey = JSON.stringify(['local', q.toLowerCase(), live]);
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
+  let response;
+  try {
+    response = await fetch(`api/search?${new URLSearchParams({ q, ...(live ? { live: '1' } : {}) })}`);
+  } catch {
+    throw new SearchError({ text: 'MultiSync on this computer has stopped. Start it again, then search.', local: true });
+  }
+  const json = await response.json().catch(() => null);
+  if (!response.ok || !json || !Array.isArray(json.items)) {
+    throw new SearchError({ text: `Search could not read YouTube just now${json && json.error ? ` (${String(json.error).slice(0, 120)})` : ''}.`, local: true });
+  }
+  // Keep only well-formed entries; this data came from a web page, not a contract.
+  const items = json.items
+    .filter((it) => it && /^[\w-]{11}$/.test(it.id || '') && typeof it.title === 'string')
+    .map((it) => ({ id: it.id, title: it.title, channel: String(it.channel || ''), thumb: `https://i.ytimg.com/vi/${it.id}/mqdefault.jpg`, live: Boolean(it.live), upcoming: Boolean(it.upcoming), duration: Number(it.duration) || 0 }));
+  const page = { items, next: '' };
   cache.set(cacheKey, page);
   return page;
 }

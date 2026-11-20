@@ -7,13 +7,13 @@ A from-scratch rebuild of the idea behind [viewsync.net](https://viewsync.net/),
 - Day and night themes. "Auto" follows your device.
 - Every video sits in its own labelled frame, so the page's controls never cover the video. The video you are listening to is outlined in amber.
 - Works from a 320px phone to an ultrawide monitor.
-- No build step, no dependencies, no server code, no accounts, no analytics, no API keys.
+- No build step, no dependencies, no accounts, no analytics, no API keys. One small optional server file (`server.js`) for search.
 - Cost to run: zero. Any static host works (GitHub Pages, Netlify, S3 + CloudFront).
 
 ## Run it
 
 1. Open a terminal in this folder.
-2. Run `npm start` (or `python3 -m http.server 8080`). On a Mac you can instead double-click `start.command`.
+2. Run `npm start`. On a Mac you can instead double-click `start.command`. (Any static server also works, but then search needs a key.)
 3. Open `http://localhost:8080` in your browser. Use `localhost`, not `127.0.0.1`: Twitch refuses raw IP addresses.
 4. Paste links, press **Add**, then **Watch in sync**.
 5. Click **Start** once.
@@ -22,7 +22,7 @@ Do not open `index.html` by double-clicking it. Video sites refuse to play on `f
 
 ## Features
 
-0. **Search YouTube from the page.** Suggestions appear as you type. Results stay open, so you can add several videos from one search, with a "Live now" filter. Needs a free key (see below).
+0. **Search YouTube from the page.** Suggestions appear as you type. Results stay open, so you can add several videos from one search, with a "Live now" filter. No key needed when started with `npm start`.
 1. **One-click start.** Every video buffers muted, then all are released together.
 2. **Automatic sync.** Checked every half second; a drifted video is pulled back. Tolerance is adjustable (0.3s to 2s).
 3. **Fine-tune while watching.** Shift any video in 0.1s steps (Shift-click for 1s). The link updates as you go.
@@ -54,22 +54,33 @@ Found by testing the live site on 19 Nov 2026.
 | 11 | YouTube only. | YouTube, Twitch, Vimeo, direct files. |
 | 12 | Loads a visitor counter and jQuery 1.8 (2012). | No trackers, no libraries. |
 
-## YouTube search: the free key
+## YouTube search
 
-YouTube only allows search through its official API, which needs a key tied to a Google account.
+Search works with no key when MultiSync is started with `npm start` (or `start.command`).
 
-1. Open the YouTube Data API v3 page in Google Cloud: https://console.cloud.google.com/apis/library/youtube.googleapis.com
-2. Create a project if asked, then press **Enable**.
-3. Go to **Credentials**, press **Create credentials**, choose **API key**.
-4. Paste the key into the box MultiSync shows the first time you search.
+How: `server.js` is a small local server that comes with the project. Besides serving the pages, it fetches YouTube's public results page for what you typed (the same page youtube.com shows) and hands the videos to the page. A browser cannot read that page from another site directly, which is why the local helper is needed.
 
 Things to know:
 
-- It is free. The default allowance is about 100 searches a day; "More results" counts as a search. Repeating a search in the same visit costs nothing.
-- The key is saved only in your browser (`localStorage`). It is never written into the code or the link you share.
-- Recommended: in Google Cloud, restrict the key to "YouTube Data API v3" and to your site's address (for example `http://localhost:8080/*`).
-- Suggestions while typing need no key. They come from the same public endpoint youtube.com's search box uses; it is not a documented API, so if it ever stops answering you simply get no suggestions.
-- Pasting links needs no key and has no limit.
+- No account, no key, no daily limit.
+- It listens only on your own computer (`127.0.0.1`). Other devices and other websites cannot use it.
+- It reads a web page, not an official API. If YouTube changes that page, search will stop until the code is updated; the app then says so and offers the key below.
+- It asks YouTube at most about once a second and remembers recent searches for five minutes.
+- It only works when the pages come from `server.js`. On a plain static host (GitHub Pages, S3) there is no helper, so search uses the key below.
+- "More results" is not available in this mode; you get the first page (up to 20 videos).
+
+### The backup: a free YouTube key
+
+Needed only if you host the pages somewhere without `server.js`, or if keyless search breaks.
+
+1. Open https://console.cloud.google.com/apis/library/youtube.googleapis.com
+2. Create a project if asked, then press **Enable**.
+3. Go to **Credentials**, press **Create credentials**, choose **API key**.
+4. Paste the key into the box MultiSync shows when it needs one.
+
+The key is free, allows about 100 searches a day, and is saved only in your browser.
+
+Suggestions while typing never need a key.
 
 ## Privacy
 
@@ -93,8 +104,8 @@ Things to know:
 
 ## Tests
 
-1. `npm test`: 36 unit tests for link parsing, layout, sync maths and search results. Needs only Node 18+.
-2. `npm run test:browser`: 15 end-to-end checks in headless Chrome. Needs Playwright (`npm i -D playwright`).
+1. `npm test`: 40 unit tests for link parsing, layout, sync maths and search results. Needs only Node 18+.
+2. `npm run test:browser`: 16 end-to-end checks in headless Chrome. Needs Playwright (`npm i -D playwright`).
 
 The browser checks use offline stand-ins for the YouTube, Twitch and Vimeo players (`tests/mock-players.js`) plus a real audio file for the direct-file player. They cover start-up, drift repair, mixed sources, add/remove, live and chat, both themes, and six screen sizes from 320×568 to 2560×1080.
 
@@ -112,6 +123,8 @@ js/watch.js       tiles, controls, sync loop
 js/builder.js     the build page
 js/theme.js       day / night
 js/icons.js       inline icons
+server.js         local server: files + keyless YouTube search
+js/ytscrape.js    reads YouTube's results page    (pure, tested)
 js/ytsearch.js    YouTube search and suggestions  (pure parts tested)
 js/searchbox.js   the search / paste box used on both pages
 js/store.js       localStorage helpers

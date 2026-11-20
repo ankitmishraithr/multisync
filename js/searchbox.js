@@ -1,7 +1,7 @@
 // The "find videos" box used on both pages: type to search YouTube (with suggestions),
 // or paste links. Results stay open so several videos can be added from one search.
 import { parseInput, formatTime } from './parse.js';
-import { searchYouTube, suggest, SearchError } from './ytsearch.js';
+import { searchYouTube, searchLocal, localSearchAvailable, suggest, SearchError } from './ytsearch.js';
 import { loadApiKey, saveApiKey, loadSearches, rememberSearch, clearSearches } from './store.js';
 import { icon } from './icons.js';
 
@@ -18,7 +18,7 @@ function el(tag, props = {}, children = []) {
  */
 export function mountSearch(refs, hooks) {
   const { input, button, suggestBox, panel, error } = refs;
-  const state = { q: '', live: false, items: [], next: '', loading: false, shown: false, active: -1, options: [], typed: 0 };
+  const state = { q: '', live: false, items: [], next: '', loading: false, shown: false, active: -1, options: [], typed: 0, keyless: false };
   const label = button.querySelector('.lbl') || button;
 
   const looksLikeLinks = () => parseInput(input.value).length > 0;
@@ -132,7 +132,7 @@ export function mountSearch(refs, hooks) {
     return el('div', { className: 'results-head' }, [
       el('strong', { textContent: `Results for "${state.q}"` }),
       el('div', { className: 'seg' }, [all, live]),
-      keyBtn,
+      ...(state.keyless ? [] : [keyBtn]), // no key in use, so nothing to manage
       close,
     ]);
   }
@@ -156,7 +156,9 @@ export function mountSearch(refs, hooks) {
       more.addEventListener('click', () => runSearch(state.q, state.live, state.next));
       foot.append(more);
     }
-    foot.append(el('span', { className: 'note', textContent: 'Click several to add them all. Each search or "More" uses 1 of about 100 free searches a day.' }));
+    foot.append(el('span', { className: 'note', textContent: state.keyless
+      ? 'Click several to add them all. No key needed: the search runs through MultiSync on this computer.'
+      : 'Click several to add them all. Each search or "More" uses 1 of about 100 free searches a day.' }));
     panel.append(foot);
   }
 
@@ -195,8 +197,8 @@ export function mountSearch(refs, hooks) {
     ]);
     panel.replaceChildren(
       el('div', { className: 'setup' }, [
-        el('strong', { textContent: 'Searching needs a free YouTube key (one time, about 5 minutes)' }),
-        el('p', { className: 'note', textContent: 'YouTube only allows search through a key tied to a Google account. It is free, gives about 100 searches a day, and is saved only in this browser. Suggestions and pasting links work without it.' }),
+        el('strong', { textContent: 'Search needs one of two things' }),
+        el('p', { className: 'note', textContent: 'Easiest: start MultiSync with "npm start" or by double-clicking start.command, then reload this page. Search then works with no key. Otherwise, add a free YouTube key below (one time, about 5 minutes, about 100 searches a day, saved only in this browser).' }),
         steps,
         el('div', { className: 'row' }, [field, save]),
         note,
@@ -214,11 +216,25 @@ export function mountSearch(refs, hooks) {
     Object.assign(state, { q, live, shown: true });
     if (fresh) Object.assign(state, { items: [], next: '' });
     const key = loadApiKey();
-    if (!key) return drawSetup('');
+    // Opened from MultiSync's own server? Then search needs no key. A saved key is the backup.
+    const local = await localSearchAvailable();
+    if (!local && !key) return drawSetup('');
+    state.keyless = local && !pageToken;
     state.loading = true;
     drawResults();
     try {
-      const page = await searchYouTube({ q, key, live, pageToken });
+      let page;
+      if (local && !pageToken) {
+        try {
+          page = await searchLocal({ q, live });
+        } catch (failure) {
+          if (!key) throw failure;
+          state.keyless = false;
+          page = await searchYouTube({ q, key, live, pageToken }); // quietly use the key instead
+        }
+      } else {
+        page = await searchYouTube({ q, key, live, pageToken });
+      }
       if (state.q !== q || state.live !== live) return; // a newer search replaced this one
       const seen = new Set(state.items.map((i) => i.id));
       state.items = fresh ? page.items : [...state.items, ...page.items.filter((i) => !seen.has(i.id))];
@@ -227,6 +243,9 @@ export function mountSearch(refs, hooks) {
     } catch (e) {
       state.loading = false;
       if (e instanceof SearchError && e.badKey) return drawSetup(e.message);
+      if (e instanceof SearchError && e.local && !state.items.length) {
+        return drawSetup(`${e.message} YouTube may have changed its page. Try again in a minute, or add a free key so search keeps working.`);
+      }
       error.textContent = e instanceof SearchError ? e.message : 'Search failed. Try again.';
       if (!state.items.length) closeResults();
       else drawResults();
