@@ -60,7 +60,8 @@ export function clamp(value, min, max) {
 //   base:     the smallest latency this stream has shown — the best it can do
 //   extra:    seconds the user asked this stream to stay behind (the nudge buttons)
 
-export const LIVE = { JUMP_OVER: 6, FAST_OVER: 3, SLOW_OVER: 1.2, DONE_UNDER: 0.5, AHEAD_BY: 1.5, JUMP_COOLDOWN: 4 };
+// FAR_BEHIND: no real live stream is this far behind by itself, so it is never accepted as "normal".
+export const LIVE = { FAR_BEHIND: 120, JUMP_OVER: 6, FAST_OVER: 3, SLOW_OVER: 1.2, DONE_UNDER: 0.5, AHEAD_BY: 1.5, JUMP_COOLDOWN: 4 };
 
 /**
  * Decide what to do with one live stream.

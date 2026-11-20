@@ -189,7 +189,7 @@ await check('watch: a blocked video does not stop the others; live is recognised
   const page = await open(`/watch.html?v=${A}&t=0&v=BLOCKBBBBBB&t=0&v=LIVECCCCCCC&t=0&v=${B}&t=5`);
   await page.waitForFunction(() => document.getElementById('start').dataset.action === 'start' && !document.getElementById('start').disabled);
   assert.equal((await page.textContent('#start')).trim(), 'Start all 3');
-  assert.match(await page.locator('.tile').nth(1).locator('.msg').textContent(), /cannot be played on other sites/);
+  assert.match(await page.locator('.tile').nth(1).locator('.msg').textContent(), /has ended and left no recording, or its owner does not allow/);
   await begin(page);
   await page.waitForTimeout(800);
   const p = await players(page);
@@ -342,7 +342,35 @@ await check('live: delay is shown, a pause or stall is caught up automatically, 
   assert.match(await drift.textContent(), /^2[4-6]s behind real time$/);
   await page.click('#golive'); // the button still works by hand
   await page.waitForFunction(() => window.__players.LIVEAAAAAAA.seeks === 2);
+
+  // a live stream that is hours behind (the player started from an old point) is brought to live
+  await page.click('#more');
+  await page.check('#staylive');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.__players.LIVEAAAAAAA.skew(-3000));
+  await page.waitForFunction(() => Date.now() / 1000 - window.__players.LIVEAAAAAAA.reference() < 25, null, { timeout: 8000 });
+  await page.waitForFunction(() => /^\d+s behind/.test(document.querySelector('.tile .drift').textContent), null, { timeout: 25000 });
+  assert.match(await drift.textContent(), /^1\ds behind real time$/, 'the old point is never accepted as normal');
+
+  // the broadcaster ends the stream: the tile says so, and offers the recording
+  const badge = page.locator('.tile').nth(0).locator('.badge');
+  assert.equal(await badge.textContent(), 'LIVE');
+  await page.evaluate(() => window.__players.LIVEAAAAAAA.end());
+  await page.waitForSelector('.tile .ended-note:not([hidden])');
+  assert.equal(await badge.textContent(), 'ENDED');
+  assert.match(await page.locator('.tile').nth(0).locator('.ended-note').textContent(), /This live stream has ended/);
+  assert.equal(await drift.textContent(), '');
+  assert.ok(await page.locator('#golive').isHidden(), 'no live streams left, so no Go live button');
+  assert.equal((await players(page))[B].state, 1, 'the other video carries on');
+  await page.waitForTimeout(1500);
+  assert.equal(await badge.textContent(), 'ENDED', 'it does not flip back to LIVE');
+  await page.evaluate(() => { window.__old = window.__players.LIVEAAAAAAA; });
+  await page.locator('.tile').nth(0).getByText('Watch the recording').click();
+  await page.waitForFunction(() => window.__players.LIVEAAAAAAA && window.__players.LIVEAAAAAAA !== window.__old && window.__players.LIVEAAAAAAA.state === 1);
+  assert.ok(await page.locator('.tile').nth(0).locator('.ended-note').isHidden());
+  assert.equal(await page.locator('.tile').count(), 2);
   await page.context().close();
+
 
   // only live streams in the session: Pause has nothing to stop, and says so
   const only = await open('/watch.html?v=LIVEAAAAAAA&v=LIVEBBBBBBB');
@@ -355,6 +383,18 @@ await check('live: delay is shown, a pause or stall is caught up automatically, 
   assert.ok(Object.values(p).every((x) => x.state === 1));
   assert.equal(await only.getAttribute('#play', 'aria-label'), 'Pause');
   await only.context().close();
+
+  // a live stream that is slow to start is not sent back to its first minute
+  const slow = await open(`/watch.html?v=${A}&t=10&v=LATELIVEAAA&t=0`);
+  await begin(slow); // gives up waiting after 8s and starts the rest
+  assert.equal((await players(slow))[A].state, 1);
+  await slow.waitForFunction(() => window.__players.LATELIVEAAA.state === 1, null, { timeout: 8000 });
+  await slow.waitForFunction(() => /behind real time/.test(document.querySelectorAll('.tile .drift')[1].textContent), null, { timeout: 8000 });
+  p = await players(slow);
+  assert.equal(p.LATELIVEAAA.seeks, 0, 'never seeked to 0:00');
+  assert.ok(p.LATELIVEAAA.behind < 16.5, `at the live point (${p.LATELIVEAAA.behind.toFixed(1)}s)`);
+  assert.equal(await slow.locator('.tile').nth(1).locator('.badge').textContent(), 'LIVE');
+  await slow.context().close();
 
   // a live stream added while others are playing is not thrown back in time
   const late = await open(`/watch.html?v=${A}&t=100`);

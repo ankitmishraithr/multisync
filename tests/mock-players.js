@@ -2,6 +2,7 @@
 // app can be tested without the network. The ID picks the behaviour:
 //   LIVE…  live stream        BLOCK… cannot be embedded      SLOW… slow to buffer
 //   FLAKY… ignores the first play request                    offline… Twitch channel that is offline
+//   LATE…  takes 9 seconds before it first plays (LATELIVE… = a live stream that does so)
 (() => {
   const S = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 };
   window.__players = {};
@@ -24,6 +25,8 @@
     reference() { return this.live ? Date.now() / 1000 - 15 - (this.edge() - this.now()) : this.now(); }
     get t() { return this.now(); }
     skew(sec) { this.base += sec; }
+    /** The broadcaster stops the stream. */
+    end() { this.base = this.now(); this.since = null; this.set(S.ENDED); }
     play() {
       if (this.state === S.PLAYING || this.pending) return;
       this.plays++;
@@ -34,8 +37,13 @@
       }
       this.pending = true;
       this.set(S.BUFFERING);
-      if (this.live && this.plays === 1) this.base = this.edge(); // a fresh join starts at the live point
-      setTimeout(() => { this.pending = false; this.since = performance.now(); this.set(S.PLAYING); }, this.id.startsWith('SLOW') ? 1500 : 120);
+      const fresh = this.live && this.plays === 1;
+      setTimeout(() => {
+        this.pending = false;
+        if (fresh) this.base = this.edge(); // a fresh join starts at the live point
+        this.since = performance.now();
+        this.set(S.PLAYING);
+      }, this.id.startsWith('SLOW') ? 1500 : this.id.startsWith('LATE') && this.plays === 1 ? 9000 : 120);
     }
     pause() {
       if (this.state !== S.PLAYING) return;
@@ -65,7 +73,7 @@
   class YTPlayer {
     constructor(host, opts) {
       const id = opts.videoId;
-      this.sim = new Sim(id, { live: id.startsWith('LIVE'), start: opts.playerVars.start || 0, onState: (s) => opts.events.onStateChange({ data: s }) });
+      this.sim = new Sim(id, { live: id.includes('LIVE'), start: opts.playerVars.start || 0, onState: (s) => opts.events.onStateChange({ data: s }) });
       const frame = paint(host.parentNode, `YouTube ${id}`);
       host.remove();
       this.frame = frame;

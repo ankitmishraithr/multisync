@@ -73,8 +73,8 @@ const YT_ERRORS = {
   2: 'This video ID is not valid.',
   5: 'This video cannot be played in the browser.',
   100: 'This video was removed or is private.',
-  101: 'This video cannot be played on other sites (the owner turned that off, or it is a finished live stream with no recording).',
-  150: 'This video cannot be played on other sites (the owner turned that off, or it is a finished live stream with no recording).',
+  101: 'This video cannot be played here. Either it was a live stream that has ended and left no recording, or its owner does not allow playing on other sites.',
+  150: 'This video cannot be played here. Either it was a live stream that has ended and left no recording, or its owner does not allow playing on other sites.',
   153: 'YouTube refused the player. Open this page from a web server (http://…), not from a file.',
 };
 
@@ -95,7 +95,8 @@ class YouTube extends Base {
       videoId: this.video.id,
       width: '100%',
       height: '100%',
-      playerVars: { playsinline: 1, rel: 0, start: Math.floor(this.video.start || 0), origin: location.origin },
+      // No start time unless one was asked for: start=0 can send a live stream back to its first minute.
+      playerVars: { playsinline: 1, rel: 0, origin: location.origin, ...(this.video.start > 0 ? { start: Math.floor(this.video.start) } : {}) },
       events: {
         onReady: () => this.ready(),
         onStateChange: (e) => this.emit(e.data),

@@ -1,6 +1,6 @@
 import { parseWatch, buildQuery, formatTime, videoKey, sourceUrl, shortName, SOURCE_LABEL } from './parse.js';
 import { computeRects, stackRects, shouldStack } from './layout.js';
-import { STATE, planCorrections, planLive, sharedDuration, targetTime, clamp } from './sync.js';
+import { STATE, LIVE, planCorrections, planLive, sharedDuration, targetTime, clamp } from './sync.js';
 import { loadSettings, saveSettings, rememberSession } from './store.js';
 import { createPlayer, chatUrl } from './sources.js';
 import { hydrateIcons, setIcon, icon } from './icons.js';
@@ -109,12 +109,32 @@ function tool(iconName, label, onClick, extraClass = '') {
   return b;
 }
 
+/** Create (or re-create) the player inside a tile. */
+function mountPlayer(t) {
+  const mine = createPlayer({ ...t.video, start: t.start }, t.parts.frame, {
+    onReady: () => {
+      if (t.player !== mine) return;
+      t.ready = true;
+      readInfo(t);
+      if (state.phase === 'running') joinRunning(t);
+      else updateGate();
+    },
+    onState: (code) => t.player === mine && onPlayerState(t, code),
+    onError: (message) => t.player === mine && failTile(t, message),
+  });
+  t.player = mine;
+  // A video that never answers must not hold the others hostage.
+  setTimeout(() => {
+    if (tiles.includes(t) && t.player === mine && t.usable && !t.ready) failTile(t, 'This video did not load in time.');
+  }, 20000);
+}
+
 function addTile(video) {
   const t = {
     uid: nextUid++, video: { kind: video.kind, id: video.id }, start: video.start || 0,
     player: null, ready: false, usable: true, live: video.kind === 'twitch', primed: false,
     title: '', volume: 100, lastFix: 0, lastKick: 0, el: null, parts: {},
-    liveBase: null, liveSettle: 0, liveRate: 1, lastLiveJump: -Infinity, joining: false,
+    liveBase: null, liveSettle: 0, liveRate: 1, lastLiveJump: -Infinity, joining: false, ended: false,
   };
   const el = document.createElement('div');
   el.className = 'tile';
@@ -129,10 +149,11 @@ function addTile(video) {
     <div class="tile-body">
       <div class="frame"></div>
       <div class="msg" hidden></div>
+      <div class="ended-note" hidden></div>
     </div>`;
   t.el = el;
   const q = (sel) => el.querySelector(sel);
-  t.parts = { frame: q('.frame'), num: q('.num'), title: q('.title'), badge: q('.badge'), drift: q('.drift'), msg: q('.msg') };
+  t.parts = { frame: q('.frame'), num: q('.num'), title: q('.title'), badge: q('.badge'), drift: q('.drift'), msg: q('.msg'), ended: q('.ended-note') };
   t.parts.title.textContent = shortName(t.video);
   t.parts.badge.hidden = !t.live;
 
@@ -155,20 +176,7 @@ function addTile(video) {
   stage.append(el);
   if (!state.solo) state.solo = t;
 
-  t.player = createPlayer({ ...t.video, start: t.start }, t.parts.frame, {
-    onReady: () => {
-      t.ready = true;
-      readInfo(t);
-      if (state.phase === 'running') joinRunning(t);
-      else updateGate();
-    },
-    onState: (code) => onPlayerState(t, code),
-    onError: (message) => failTile(t, message),
-  });
-  // A video that never answers must not hold the others hostage.
-  setTimeout(() => {
-    if (tiles.includes(t) && t.usable && !t.ready) failTile(t, 'This video did not load in time.');
-  }, 20000);
+  mountPlayer(t);
   return t;
 }
 
@@ -221,7 +229,7 @@ function readInfo(t) {
       t.parts.title.title = `${info.title} — ${info.author}`;
     }
   }
-  if (info.live !== t.live) {
+  if (!t.ended && info.live !== t.live) {
     t.live = info.live;
     t.parts.badge.hidden = !t.live;
   }
@@ -355,12 +363,19 @@ function goLive() {
  */
 function tickLive(snap, now) {
   tiles.forEach((t, i) => {
-    if (!t.live || !snap[i].usable) return;
+    if (!t.live || t.ended || !snap[i].usable) return;
     const latency = safe(() => t.player.latency(), null);
     if (latency == null || !Number.isFinite(latency)) return; // this source cannot measure it
     const label = (text) => { t.parts.drift.textContent = text; t.parts.drift.classList.remove('bad'); };
     if (snap[i].state !== STATE.PLAYING) return label(snap[i].state === STATE.BUFFERING ? 'buffering' : '');
     if (now < t.liveSettle) return label('going live…');
+    // Minutes or hours behind is never a stream's normal delay: it means the player started
+    // from an old point (seen with real YouTube: a live tile showing its first minute, 4 hours late).
+    if (latency > LIVE.FAR_BEHIND + t.start) {
+      if (!settings.stayLive) return label(`${Math.round(latency / 60)} min behind real time`);
+      if (now - t.lastLiveJump > LIVE.JUMP_COOLDOWN * 1000) liveJump(t);
+      return label('going live…');
+    }
     if (t.liveBase == null || latency < t.liveBase) t.liveBase = latency;
     const behind = `${Math.max(0, Math.round(latency))}s behind real time`;
     if (!settings.stayLive) { setLiveRate(t, 1); return label(behind); }
@@ -496,7 +511,11 @@ async function start() {
 
   usable().forEach((t) => {
     readInfo(t);
-    if (!t.live) safe(() => t.player.seek(t.start)); // live streams are handled by tickLive()
+    if (t.live) return; // live streams are handled by tickLive()
+    // A video that has not played yet could still turn out to be live (YouTube only says once it
+    // plays), and seeking a live stream to "0:00" throws it back to its first minute. Wait for it.
+    if (t.primed) safe(() => t.player.seek(t.start));
+    else t.joining = true;
   });
 
   state.phase = 'running';
@@ -508,6 +527,47 @@ async function start() {
   play();
   syncUrl();
   if (!allPrimed) toast('Some videos are slow to load. They will catch up.');
+}
+
+/** The broadcaster stopped the stream: say so on the tile instead of leaving a red LIVE badge. */
+function markEnded(t) {
+  t.ended = true;
+  t.live = false;
+  setLiveRate(t, 1);
+  t.parts.badge.textContent = 'ENDED';
+  t.parts.badge.classList.add('ended');
+  t.parts.badge.hidden = false;
+  t.parts.drift.textContent = '';
+  const watch = Object.assign(document.createElement('button'), { className: 'btn primary', textContent: 'Watch the recording' });
+  watch.addEventListener('click', () => reloadAsRecording(t));
+  const drop = Object.assign(document.createElement('button'), { className: 'btn', textContent: 'Remove' });
+  drop.addEventListener('click', () => removeTile(t));
+  const row = Object.assign(document.createElement('div'), { className: 'row' });
+  row.append(watch, drop);
+  t.parts.ended.replaceChildren(
+    Object.assign(document.createElement('strong'), { textContent: 'This live stream has ended' }),
+    Object.assign(document.createElement('span'), { textContent: 'If the channel kept a recording, you can watch it from the beginning.' }),
+    row,
+  );
+  t.parts.ended.hidden = false;
+  if (state.solo === t) state.solo = tiles.find((x) => x.usable && !x.ended) || t;
+  applyAudio();
+  $('golive').hidden = !tiles.some((x) => x.live && x.usable);
+  refreshChatButton();
+  toast(`Video ${number(t)}: the live stream has ended`);
+}
+
+/** Load the same video again as an ordinary recording, from the beginning. */
+function reloadAsRecording(t) {
+  safe(() => t.player.destroy());
+  Object.assign(t, { ended: false, live: false, ready: false, usable: true, primed: false, liveBase: null, liveRate: 1, start: 0, joining: false });
+  t.parts.ended.hidden = true;
+  t.parts.msg.hidden = true;
+  t.parts.badge.hidden = true;
+  t.parts.badge.textContent = 'LIVE';
+  t.parts.badge.classList.remove('ended');
+  mountPlayer(t);
+  syncUrl();
 }
 
 /** A video added while the session is already running slots straight in. */
@@ -524,6 +584,7 @@ function joinRunning(t) {
 
 function onPlayerState(t, code) {
   if (code === STATE.PLAYING) t.lastKick = performance.now();
+  if (code === STATE.ENDED && t.live && !t.ended && state.phase === 'running') markEnded(t);
   if (state.phase === 'priming' && code === STATE.PLAYING && !t.primed) {
     t.primed = true;
     readInfo(t);
