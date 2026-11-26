@@ -1,6 +1,8 @@
 // YouTube search through the official YouTube Data API v3, using the user's own free key.
 // The top half is pure (tested in tests/ytsearch.test.mjs); the bottom half talks to the network.
 
+import { SEARCH_HELPER } from './config.js';
+
 const API = 'https://www.googleapis.com/youtube/v3';
 const NAMED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 
@@ -122,21 +124,46 @@ export async function searchYouTube({ q, key, live = false, pageToken = '' }) {
   return page;
 }
 
-// ---------- search without a key, through MultiSync's own server (server.js) ----------
+// ---------- search without a key, through a copy of server.js ----------
+// Either the one these pages were opened from (npm start on your own computer), or the
+// online helper named in js/config.js.
 
-let localSearch = null; // unknown until asked once
+let helper; // undefined = not looked for yet; '' = same server as the page; 'https://…/' = online helper
 
-/** True when the page was opened from MultiSync's own server, which can search without a key. */
-export async function localSearchAvailable() {
-  if (localSearch != null) return localSearch;
+async function hasSearch(base, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
   try {
-    const response = await fetch('api/health');
+    const response = await fetch(`${base}api/health`, { signal: controller.signal });
     const json = response.ok ? await response.json() : null;
-    localSearch = Boolean(json && json.search);
+    return Boolean(json && json.search);
   } catch {
-    localSearch = false;
+    return false;
+  } finally {
+    clearTimeout(timer);
   }
-  return localSearch;
+}
+
+/**
+ * Find a search helper. onSlow() is called if the online helper is taking a while
+ * (free hosts put it to sleep when idle; waking it can take up to a minute).
+ */
+export async function localSearchAvailable(onSlow) {
+  if (helper !== undefined) return true;
+  if (await hasSearch('', 4000)) {
+    helper = '';
+    return true;
+  }
+  if (SEARCH_HELPER) {
+    const slow = setTimeout(() => onSlow && onSlow(), 2500);
+    const awake = await hasSearch(`${SEARCH_HELPER}/`, 90000);
+    clearTimeout(slow);
+    if (awake) {
+      helper = `${SEARCH_HELPER}/`;
+      return true;
+    }
+  }
+  return false; // not remembered, so a later search tries again
 }
 
 export async function searchLocal({ q, live = false }) {
@@ -144,9 +171,10 @@ export async function searchLocal({ q, live = false }) {
   if (cache.has(cacheKey)) return cache.get(cacheKey);
   let response;
   try {
-    response = await fetch(`api/search?${new URLSearchParams({ q, ...(live ? { live: '1' } : {}) })}`);
+    response = await fetch(`${helper || ''}api/search?${new URLSearchParams({ q, ...(live ? { live: '1' } : {}) })}`);
   } catch {
-    throw new SearchError({ text: 'MultiSync on this computer has stopped. Start it again, then search.', local: true });
+    helper = undefined; // look for it again next time
+    throw new SearchError({ text: 'The search helper did not answer.', local: true });
   }
   const json = await response.json().catch(() => null);
   if (!response.ok || !json || !Array.isArray(json.items)) {

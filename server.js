@@ -1,6 +1,8 @@
 // MultiSync's own small server. Run it with:  npm start   (or double-click start.command)
 //
-// It does two things, both only for this computer (it listens on 127.0.0.1, not the network):
+// It does two things. On your own computer it listens on 127.0.0.1 only, not the network.
+// On a host such as Render it can serve as the online search helper for a copy of the pages
+// hosted elsewhere: set MULTISYNC_ALLOW_ORIGIN to that site's address (see README).
 //   1. serves the files in this folder, like any static server
 //   2. /api/search — fetches YouTube's public results page for a query and returns the videos,
 //      so searching needs no API key. The browser cannot do this itself (YouTube does not
@@ -15,7 +17,10 @@ import { parseResultsPage, resultsUrl } from './js/ytscrape.js';
 
 const ROOT = normalize(join(fileURLToPath(import.meta.url), '..'));
 const PORT = Number(process.env.PORT) || 8080;
-const HOST = process.env.HOST || '127.0.0.1';
+const HOST = process.env.HOST || (process.env.RENDER ? '0.0.0.0' : '127.0.0.1'); // Render sets RENDER=true
+// Other sites allowed to call /api/* from the browser, e.g. "https://name.github.io". Comma-separated.
+const ALLOWED_ORIGINS = (process.env.MULTISYNC_ALLOW_ORIGIN || '').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean);
+const PUBLIC = HOST !== '127.0.0.1' || ALLOWED_ORIGINS.length > 0;
 const YT_ORIGIN = process.env.MULTISYNC_YT_ORIGIN || 'https://www.youtube.com'; // overridden only by the tests
 const CAN_SEARCH = typeof fetch === 'function';
 
@@ -25,9 +30,29 @@ const TYPES = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.md': 'text/plain; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
 };
 
-function sendJson(res, status, body) {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+function sendJson(res, status, body, extra = {}) {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra });
   res.end(JSON.stringify(body));
+}
+
+/** Only the sites named in MULTISYNC_ALLOW_ORIGIN may read the answers from a browser. */
+function corsHeaders(req) {
+  const origin = req.headers.origin;
+  return origin && ALLOWED_ORIGINS.includes(origin) ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};
+}
+
+// When reachable from the internet, no single visitor may hammer YouTube through this server.
+const hits = new Map(); // address -> recent request times
+const LIMIT = 30; // searches per minute per visitor
+function tooMany(req) {
+  if (!PUBLIC) return false;
+  const who = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const now = Date.now();
+  const recent = (hits.get(who) || []).filter((t) => now - t < 60000);
+  recent.push(now);
+  hits.set(who, recent);
+  if (hits.size > 5000) hits.clear();
+  return recent.length > LIMIT;
 }
 
 // ---------- search ----------
@@ -70,21 +95,23 @@ async function search(query, live) {
   return page;
 }
 
-async function handleApi(url, res) {
-  if (url.pathname === '/api/health') return sendJson(res, 200, { ok: true, search: CAN_SEARCH });
+async function handleApi(url, req, res) {
+  const cors = corsHeaders(req);
+  if (url.pathname === '/api/health') return sendJson(res, 200, { ok: true, search: CAN_SEARCH }, cors);
   if (url.pathname === '/api/search') {
     const query = (url.searchParams.get('q') || '').trim();
-    if (!query || query.length > 200) return sendJson(res, 400, { error: 'Type something to search for (up to 200 characters).' });
-    if (!CAN_SEARCH) return sendJson(res, 501, { error: 'Search without a key needs Node 18 or newer.' });
+    if (!query || query.length > 200) return sendJson(res, 400, { error: 'Type something to search for (up to 200 characters).' }, cors);
+    if (!CAN_SEARCH) return sendJson(res, 501, { error: 'Search without a key needs Node 18 or newer.' }, cors);
+    if (tooMany(req)) return sendJson(res, 429, { error: 'Too many searches in a minute. Wait a little and try again.' }, cors);
     try {
       const page = await search(query, url.searchParams.get('live') === '1');
-      return sendJson(res, 200, { items: page.items, next: '' });
+      return sendJson(res, 200, { items: page.items, next: '' }, cors);
     } catch (error) {
       const reason = error && error.name === 'AbortError' ? 'YouTube took too long to answer' : String((error && error.message) || error);
-      return sendJson(res, 502, { error: reason });
+      return sendJson(res, 502, { error: reason }, cors);
     }
   }
-  return sendJson(res, 404, { error: 'Unknown address' });
+  return sendJson(res, 404, { error: 'Unknown address' }, cors);
 }
 
 // ---------- files ----------
@@ -118,7 +145,7 @@ async function handleFile(url, req, res) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (req.method !== 'GET' && req.method !== 'HEAD') return res.writeHead(405, { 'content-type': 'text/plain' }).end('Method not allowed');
-  const work = url.pathname.startsWith('/api/') ? handleApi(url, res) : handleFile(url, req, res);
+  const work = url.pathname.startsWith('/api/') ? handleApi(url, req, res) : handleFile(url, req, res);
   Promise.resolve(work).catch(() => {
     if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' });
     res.end('Server error');
@@ -132,7 +159,8 @@ server.on('error', (error) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`MultiSync is running at http://localhost:${PORT}`);
+  console.log(PUBLIC ? `MultiSync is running on port ${PORT} (reachable from the network)` : `MultiSync is running at http://localhost:${PORT}`);
+  if (ALLOWED_ORIGINS.length) console.log(`Search helper for: ${ALLOWED_ORIGINS.join(', ')}`);
   console.log(CAN_SEARCH ? 'YouTube search works without a key.' : 'This Node version is too old for keyless search; pasted links still work.');
   console.log('Press Ctrl+C to stop.');
 });

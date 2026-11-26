@@ -157,7 +157,7 @@ export function mountSearch(refs, hooks) {
       foot.append(more);
     }
     foot.append(el('span', { className: 'note', textContent: state.keyless
-      ? 'Click several to add them all. No key needed: the search runs through MultiSync on this computer.'
+      ? 'Click several to add them all. No key needed.'
       : 'Click several to add them all. Each search or "More" uses 1 of about 100 free searches a day.' }));
     panel.append(foot);
   }
@@ -197,8 +197,8 @@ export function mountSearch(refs, hooks) {
     ]);
     panel.replaceChildren(
       el('div', { className: 'setup' }, [
-        el('strong', { textContent: 'Search needs one of two things' }),
-        el('p', { className: 'note', textContent: 'Easiest: start MultiSync with "npm start" or by double-clicking start.command, then reload this page. Search then works with no key. Otherwise, add a free YouTube key below (one time, about 5 minutes, about 100 searches a day, saved only in this browser).' }),
+        el('strong', { textContent: 'Search is not available here right now' }),
+        el('p', { className: 'note', textContent: 'This copy of MultiSync has no search helper answering. Pasting links still works. To search here, add a free YouTube key below (one time, about 5 minutes, about 100 searches a day, saved only in this browser). If you run MultiSync yourself with "npm start", search needs no key.' }),
         steps,
         el('div', { className: 'row' }, [field, save]),
         note,
@@ -217,7 +217,11 @@ export function mountSearch(refs, hooks) {
     if (fresh) Object.assign(state, { items: [], next: '' });
     const key = loadApiKey();
     // Opened from MultiSync's own server? Then search needs no key. A saved key is the backup.
-    const local = await localSearchAvailable();
+    const local = await localSearchAvailable(() => {
+      panel.hidden = false;
+      panel.replaceChildren(el('p', { className: 'results-note', textContent: 'Waking up the search helper. After a quiet period this can take up to a minute…' }));
+    });
+    if (state.q !== q) return; // the user searched for something else while waiting
     if (!local && !key) return drawSetup('');
     state.keyless = local && !pageToken;
     state.loading = true;

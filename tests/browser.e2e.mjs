@@ -455,7 +455,7 @@ await check('search: suggestions, one-time key setup, add several from one searc
   await page.keyboard.press('Enter');
   assert.equal(await page.inputValue('#paste'), 'nifty live');
   // first search ever: explains the free key instead of failing
-  await page.waitForFunction(() => /Search needs one of two things/.test(document.getElementById('results').textContent));
+  await page.waitForFunction(() => /Search is not available here right now/.test(document.getElementById('results').textContent));
   assert.equal(log.length, 0, 'nothing is sent without a key');
   await page.fill('#results input', 'short');
   await page.click('#results >> text=Save key');
@@ -535,7 +535,7 @@ await check('search with no key: MultiSync\'s own server reads YouTube\'s result
   await new Promise((r) => fakeYouTube.listen(0, r));
   const { spawn } = await import('node:child_process');
   const port = 20000 + Math.floor(Math.random() * 20000);
-  const app = spawn(process.execPath, ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port), MULTISYNC_YT_ORIGIN: `http://localhost:${fakeYouTube.address().port}` }, stdio: 'ignore' });
+  const app = spawn(process.execPath, ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port), MULTISYNC_YT_ORIGIN: `http://localhost:${fakeYouTube.address().port}`, MULTISYNC_ALLOW_ORIGIN: base }, stdio: 'ignore' });
   const own = `http://localhost:${port}`;
   try {
     for (let i = 0; i < 40; i++) { try { if ((await fetch(`${own}/api/health`)).ok) break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
@@ -544,7 +544,8 @@ await check('search with no key: MultiSync\'s own server reads YouTube\'s result
     assert.equal((await fetch(`${own}/js/%2e%2e/%2e%2e/etc/passwd`)).status, 404);
     assert.equal((await fetch(`${own}/api/search`)).status, 400);
     assert.equal((await fetch(`${own}/api/search?q=x`, { method: 'POST' })).status, 405);
-    assert.equal((await fetch(`${own}/api/search?q=x`)).headers.get('access-control-allow-origin'), null, 'other websites cannot use it');
+    assert.equal((await fetch(`${own}/api/search?q=x`, { headers: { origin: 'https://evil.example' } })).headers.get('access-control-allow-origin'), null, 'other websites cannot use it');
+    assert.equal((await fetch(`${own}/api/health`, { headers: { origin: base } })).headers.get('access-control-allow-origin'), base, 'the one allowed site can');
 
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     await ctx.route(/ytimg\.com|youtube\.com|twitch\.tv|vimeo\.com|googleapis\.com|suggestqueries/, (route) => route.abort());
@@ -596,6 +597,26 @@ await check('search with no key: MultiSync\'s own server reads YouTube\'s result
     await watch.locator('#add-results .result').nth(1).click();
     assert.equal(await watch.locator('.tile').count(), 2);
     await ctx.close();
+
+    // The pages hosted somewhere else (like GitHub Pages) use the same server as an online helper.
+    const hosted = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await hosted.route(/ytimg\.com|youtube\.com|twitch\.tv|vimeo\.com|googleapis\.com|suggestqueries/, (route) => route.abort());
+    const far = await hosted.newPage();
+    far.on('pageerror', (e) => problems.push(`hosted: ${e.message}`));
+    await far.addInitScript((address) => { globalThis.MULTISYNC_SEARCH_HELPER = address; }, own);
+    await far.goto(`${base}/index.html`); // a plain file server with no /api of its own
+    await far.fill('#paste', 'crude oil');
+    await far.click('#add');
+    await far.waitForSelector('#results .result');
+    assert.equal(await far.locator('#results .result').count(), 3);
+    assert.match(await far.textContent('#results .results-foot'), /No key needed/);
+    assert.equal(asked.at(-1).get('search_query'), 'crude oil');
+    await hosted.close();
+
+    // a visitor cannot hammer YouTube through the helper
+    let refused = 0;
+    for (let i = 0; i < 40; i++) if ((await fetch(`${own}/api/search?q=nifty%20live`)).status === 429) refused++;
+    assert.ok(refused >= 5, `rate limit kicked in (${refused} refused)`);
   } finally {
     app.kill();
     fakeYouTube.close();
