@@ -66,8 +66,17 @@ Things to know:
 - It listens only on your own computer (`127.0.0.1`). Other devices and other websites cannot use it.
 - It reads a web page, not an official API. If YouTube changes that page, search will stop until the code is updated; the app then says so and offers the key below.
 - It asks YouTube at most about once a second and remembers recent searches for five minutes.
-- It only works when the pages come from `server.js`. On a plain static host (GitHub Pages, S3) there is no helper, so search uses the key below.
+- A plain static host (GitHub Pages, S3) cannot run `server.js`. For those, run a copy of `server.js` on a Node host and name it in `js/config.js`; see "The live site" below. With no helper at all, search uses the key below.
 - "More results" is not available in this mode; you get the first page (up to 20 videos).
+
+### The live site
+
+- Pages: https://ankitmishraithr.github.io/multisync/ (GitHub Pages, updates on every push to `main`).
+- Search helper: https://multisync-kjlo.onrender.com (a free Render web service running `node server.js` from this repo).
+- The helper only answers browsers on the site named in its `MULTISYNC_ALLOW_ORIGIN` setting, and limits each visitor to 30 searches a minute.
+- Render's free plan puts the helper to sleep when idle. The first search after a quiet period can take up to a minute; the page says so while it waits.
+- The helper was connected as a public repository, so Render does not redeploy by itself. After changing `server.js` or `js/ytscrape.js`, press "Manual Deploy" in the Render dashboard.
+- To use your own copy: deploy this repo as a Node web service, set `MULTISYNC_ALLOW_ORIGIN` to your site's address, and put the service address in `js/config.js`.
 
 ### The backup: a free YouTube key
 

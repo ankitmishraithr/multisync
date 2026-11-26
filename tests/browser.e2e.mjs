@@ -51,6 +51,8 @@ const problems = [];
 async function open(path, { mock = true, viewport = { width: 1280, height: 720 }, context, theme } = {}) {
   const ctx = context || (await browser.newContext({ viewport, colorScheme: theme || 'dark' }));
   await ctx.route(/ytimg\.com|youtube\.com|twitch\.tv|vimeo\.com|googleapis\.com|suggestqueries/, (route) => route.abort());
+  // Tests never talk to the real online helper; a test that wants one names its own.
+  await ctx.addInitScript(() => { globalThis.MULTISYNC_SEARCH_HELPER ??= ''; });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => problems.push(`${path}: ${e.message}`));
   page.on('console', (m) => m.type() === 'error' && !/ERR_FAILED|Failed to load resource/.test(m.text()) && problems.push(`${path}: ${m.text()}`));
